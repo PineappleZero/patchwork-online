@@ -23,7 +23,7 @@
       <div class="sec-title">单机 · 不用等人，点开就玩</div>
       <button id="btnSolo" class="mode-card">
         <b>人机对战</b>
-        <small>和电脑下一局</small>
+        <small>和 wzzzhhhhh 下一局</small>
       </button>
       <button id="btnLocal" class="mode-card">
         <b>同机双人</b>
@@ -85,15 +85,30 @@
 
   <main class="board-wrap" id="boardWrap" data-n="2">
 
+    <!-- 环绕舞台：只在「绕拼布板」布局下现身，由 JS 精确贴到 .players 的矩形上。
+         补丁沿这个圆角矩形的外圈排布（.ring-far / 中立指示物 会被临时搬进来）。 -->
+    <div class="frame-stage" id="frameStage" hidden>
+      <div class="frame-guide"></div>
+    </div>
+
     <!-- 所有玩家的拼布板都挂在这里，数量随人数变 -->
     <div class="players" id="playersWrap"></div>
 
     <!-- 补丁环 + 时间板 + 事件纪要 -->
     <div class="center" id="centerCol">
       <!-- 补丁环 + 环心里的时间板：合并成一块「棋盘」。
-           环在外圈转，时间板缩在环心当棋盘本身。 -->
+           环在外圈转，时间板缩在环心当棋盘本身。
+           双人局还可以切成「绕拼布板」：这时 .ring-guide 藏起来，
+           时间板单独当一块面板，补丁全部搬到 #frameStage 上去转。 -->
       <div class="ring-panel" id="boardPanel">
-        <div class="ring-label" id="ringLabel">补丁环 · 时间板</div>
+        <div class="ring-label">
+          <span class="rl-title" id="ringLabel">补丁环 · 时间板</span>
+          <span class="ring-rest" id="ringRest"></span>
+          <div class="layout-switch" id="layoutSwitch" hidden>
+            <button type="button" data-layout="ring" class="on">环绕时间板</button>
+            <button type="button" data-layout="frame">绕拼布板</button>
+          </div>
+        </div>
         <div class="ring-stage" id="ringStage">
           <div class="ring-guide"></div>
           <div class="ring-core">
@@ -229,19 +244,21 @@
 
       <div class="rules-sec">
         <h3>三种玩法</h3>
-        <p><b>人机对战</b>：你和电脑单挑，建房即开局。<b>同机双人</b>：一台设备上两人轮流操作，轮到谁就替谁落子（不必藏着看，本作没有隐藏信息）。<b>联机对战</b>：2~6 人，房主可以提前开始，也可以等人坐满自动开始。</p>
+        <p><b>人机对战</b>：你和 <b>wzzzhhhhh</b> 单挑，建房即开局。<b>同机双人</b>：一台设备上两人轮流操作，轮到谁就替谁落子（不必藏着看，本作没有隐藏信息）。<b>联机对战</b>：2~6 人，房主可以提前开始，也可以等人坐满自动开始。</p>
       </div>
 
       <div class="rules-sec">
-        <h3>补丁环包住时间板（右边那一整块）</h3>
-        <p>33 块补丁沿外圈摆放，<b>每局重新洗牌，位置都不一样</b>。金色的<b>中立指示物</b>永远停在正前方那格的逆时针一侧，它顺时针方向前面那 3 块就是你现在能买的 —— 也就是环下方放大显示的那三张卡片。</p>
-        <p><b>外圈包围的正中央就是时间板</b>（9 列 × 6 行，正好 54 格），所以环不是单独挂在一边，而是像实物那样「环在外、盘在内」。</p>
-        <p>买走一块，指示物就前移一格、整圈跟着转（<b>只前移不后退</b>）。环上越靠后的补丁画得越小，那只是远近的视觉提示。</p>
+        <h3>补丁环 · 两种环绕方式</h3>
+        <p>33 块补丁沿外圈摆放，<b>每局重新洗牌，位置都不一样</b>。金色的<b>中立指示物</b>永远停在正前方那格的逆时针一侧，它顺时针方向前面那 3 块就是你现在能买的。</p>
+        <p>买走一块，指示物就前移一格、整圈跟着转（<b>只前移不后退</b>）。</p>
+        <p><b>① 环绕时间板（默认）</b>：环是个圆，圆心就是时间板本身（9 列 × 6 行，正好 54 格），像实物那样「环在外、盘在内」。环上越靠后的补丁画得越小，那只是远近的视觉提示。</p>
+        <p><b>② 绕拼布板（只在双人局有）</b>：环从圆变成贴着两块拼布板的<b>圆角矩形</b>，补丁沿着四条边等距摊开、<b>全部正着放、一样大小</b>，所以每一块都看得清清楚楚。要在双人局里改，点棋盘标题右边那个「环绕时间板 / 绕拼布板」开关即可（每个人的选择只影响自己这块屏幕）。</p>
+        <p class="note">不管是圆还是圆角矩形，<b>你现在能买的那 3 块都会被金色描边标出来、还可以直接点它们选补丁</b>；买不起的只画一圈细虚线。</p>
       </div>
 
       <div class="rules-sec">
         <h3>怎么操作</h3>
-        <p>点环下方那三张卡片选补丁 → 鼠标在<b>自己（或当前行动方）的拼布板</b>上移动，落点实时预览（绿＝可放，红＝不可），<b>补丁会盖住鼠标停的那一格</b> → <b>左键点一下</b>固定位置（固定后预览不再跟手，可以放心去点按钮）→ 点右下角<b>确认放置</b>。</p>
+        <p>点环下方那三张卡片选补丁，<b>或者直接点环上／框上带金色描边的那几块</b> → 鼠标在<b>自己（或当前行动方）的拼布板</b>上移动，落点实时预览（绿＝可放，红＝不可），<b>补丁会盖住鼠标停的那一格</b> → <b>左键点一下</b>固定位置（固定后预览不再跟手，可以放心去点按钮）→ 点右下角<b>确认放置</b>。</p>
         <p>联机时，你的鼠标一动，对手那边的拼布板上就会出现一块半透明预览，他看得见你在琢磨什么；反过来也一样。</p>
         <p class="note">右键或 <kbd>Esc</kbd>：解除固定 ／ <kbd>R</kbd> 旋转 ／ <kbd>F</kbd> 镜像 ／ <kbd>空格</kbd> 跳过领纽扣 ／ <kbd>Enter</kbd> 确认放置</p>
       </div>

@@ -511,11 +511,42 @@ kbd {
   letter-spacing: .14em;
   color: var(--text-faint);
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
+  /* 标题 + 数量 + 环绕开关挤一行，窄屏放不下时让开关掉到第二行 */
+  flex-wrap: wrap;
 }
-.ring-rest { letter-spacing: 0; color: #5a6379; font-size: 10.5px; }
+.rl-title { flex: none; }
+.ring-rest { letter-spacing: 0; color: #5a6379; font-size: 10.5px; flex: 1; min-width: 0; text-align: right; }
+
+/* 环绕方式开关（只有双人局才会现身）。放在标题行尾部，两段式，省地方。 */
+.layout-switch {
+  flex: none;
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg-soft);
+}
+.layout-switch[hidden] { display: none; }
+.layout-switch button {
+  appearance: none;
+  border: 0;
+  margin: 0;
+  background: transparent;
+  color: var(--text-faint);
+  font-family: inherit;
+  font-size: 10.5px;
+  letter-spacing: 0;
+  line-height: 1;
+  padding: 4px 9px;
+  cursor: pointer;
+  transition: background .14s, color .14s;
+}
+.layout-switch button + button { border-left: 1px solid var(--line); }
+.layout-switch button:hover { color: var(--text-dim); }
+.layout-switch button.on { background: var(--gold-dim); color: #1a1405; font-weight: 600; }
 
 /* 环本体。所有小补丁都以这里为坐标系（left/top:50% 就是圆心）。
    --ring-d   轨道直径。app.js 直接从 .ring-guide 的宽度反算半径，窄屏只改这个变量即可。
@@ -525,6 +556,10 @@ kbd {
 .ring-stage {
   --ring-d: 336px;
   --tb-cell: 25px;
+  /* 环上小补丁的格子边长 / 间隙。补丁图形本身不再写死像素，
+     所以同一枚 chip 搬到框上（--rc-tile 换成 7px）能自动变大，不用重建。 */
+  --rc-tile: 6px;
+  --rc-gap: 1px;
   position: relative;
   width: 100%;
   height: calc(var(--ring-d) + 40px);
@@ -556,6 +591,57 @@ kbd {
 
 .ring-far { position: absolute; inset: 0; }
 
+/* ---------------- 「绕拼布板」布局 ----------------
+   #frameStage 由 JS 精确贴到 .players 的矩形上（绝对定位于 .board-wrap），
+   补丁沿这个圆角矩形路径排布，全部正放、等大。
+   --fp  路径离舞台边缘多远   --fcr  圆角半径
+   两个值由 app.js 里同一份 FRAME 常量写进来，别在这儿另写死一份。 */
+.board-wrap { position: relative; }
+
+.frame-stage {
+  position: absolute;
+  pointer-events: none;
+  z-index: 4;
+  /* --rc-tile / --fp / --fcr 都由 app.js 写进来，这里只留兜底值 */
+  --rc-tile: 8px;
+  --rc-gap: 1px;
+}
+.frame-stage[hidden] { display: none; }
+
+.frame-guide {
+  position: absolute;
+  inset: var(--fp, 26px);
+  border: 1px dashed var(--line);
+  border-radius: var(--fcr, 30px);
+}
+
+/* 换成环绕方式时把 .players 让出一条空带，补丁就落在这条带子里。
+   宽度收成 904px（＝56 + 390 + 12 + 390 + 56）刚好把两块拼布板框住，
+   竖着居中，整块框不必去占满整列。
+   内边距只是个兜底值：真正的带宽由 app.js 的 frameBand() 按实际宽度算好写进内联样式
+   （它必须 ≥ 路径内缩 + 补丁外伸，否则补丁的金色描边会压到拼布板上）。 */
+.board-wrap.layout-frame .players {
+  width: min(100%, 904px);
+  justify-self: center;
+  align-self: center;
+  height: fit-content;
+  align-content: start;
+  padding: 56px;
+  overflow: visible;
+}
+
+/* 环切到框时：虚线圆收起来，时间板单独当一块小面板（不再有环心那回事） */
+.ring-panel.layout-frame .ring-guide { display: none; }
+.ring-panel.layout-frame .ring-stage {
+  height: auto;
+  display: flex;
+  justify-content: center;
+}
+.ring-panel.layout-frame .ring-core {
+  position: static;
+  transform: none;
+}
+
 .ring-chip {
   position: absolute;
   left: 50%; top: 50%;
@@ -564,8 +650,41 @@ kbd {
   pointer-events: none;   /* 纯图形，点击交给正面的大卡片 */
 }
 .rc-grid { display: grid; }
-.rc-grid i { display: block; border-radius: 1px; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .35); }
+/* 格子的边长由 JS 写成 repeat(cols, var(--rc-tile)) 的轨道决定，
+   这里只画外观，不再重复定义尺寸。 */
+.rc-grid i {
+  display: block;
+  border-radius: 1px;
+  box-shadow: 0 0 0 .5px rgba(0, 0, 0, .35);
+}
 .rc-grid i.off { background: transparent; box-shadow: none; }
+
+/* ---------------- 可选补丁的标注 ----------------
+   中立指示物前方那 3 块，在环上／框上也要一眼认出来，还能直接点。
+   买得起 → 金色实描边 + 呼吸光晕 + 可点；买不起 → 细虚线，只是告诉你「轮到它们了」。 */
+.ring-chip.option .rc-grid {
+  outline: 1px dashed var(--gold-dim);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+.ring-chip.selectable {
+  pointer-events: auto;
+  cursor: pointer;
+}
+.ring-chip.selectable .rc-grid {
+  outline: 2px solid var(--gold);
+  outline-offset: 3px;
+  border-radius: 3px;
+  animation: chipBreath 1.6s ease-in-out infinite;
+}
+.ring-chip.picked .rc-grid {
+  outline-color: #fff;
+  box-shadow: 0 0 0 3px rgba(232, 181, 99, .45);
+}
+@keyframes chipBreath {
+  0%, 100% { filter: drop-shadow(0 0 0 rgba(232, 181, 99, 0)); }
+  50% { filter: drop-shadow(0 0 5px rgba(232, 181, 99, .9)); }
+}
 
 /* 中立指示物：金色小药丸，永远停在正前方的逆时针一侧 */
 .ring-neutral {

@@ -44,6 +44,9 @@ const S = {
   cursors: {},           // 其他座位正在考虑放置的补丁（联机时的实时预览）
   logEvents: [],
   lastEventKey: null,
+  // 环绕方式：'ring' 环着时间板（默认）／'frame' 圆角矩形绕着两块拼布板。
+  // 纯观感，只影响自己这块屏幕，所以存在本地、不进房间状态。
+  layout: 'ring',
 };
 
 /* ---------------- 三块屏幕 ---------------- */
@@ -387,20 +390,174 @@ const RING = {
   minTile: 2.2, // 格子最小可视边长：块数多的时候别把远处的补丁缩成一个点
 };
 
-let _ringBaseMax = 0;
-/** 所有补丁里最宽的那一块，在 scale=1 时占多少 px —— 用来估算环上放不放得下 */
-function ringBaseMax() {
-  if (_ringBaseMax) return _ringBaseMax;
-  S.meta.patches.forEach((p) => {
-    const o = p.orientations[0];
-    const w = o.cols * RING.tile + (o.cols - 1) * RING.gap;
-    const h = o.rows * RING.tile + (o.rows - 1) * RING.gap;
-    _ringBaseMax = Math.max(_ringBaseMax, w, h);
-  });
-  return _ringBaseMax || 29;
+/* 「绕拼布板」布局（v1.4.1）：路径不是圆，是贴着两块拼布板的圆角矩形。
+   补丁沿四条边等弧长摊开、全部正放、一样大 —— 这样每一块都看得清清楚楚。
+     insetMax 路径离舞台边缘最多这么远（舞台小的时候会按比例收，见 frameInset）。
+               补丁是「骑」在路径上的，往里往外各伸约 22px，
+               所以 CSS 里 .board-wrap.layout-frame .players 的内边距必须 ≥ insetMax + 22。
+     corner   圆角半径。
+     tile     框上小补丁的格子边长，比环上大一档 —— 这一档就是「看得清」的关键。 */
+const FRAME = { insetMax: 26, corner: 30, tile: 8, gap: 1 };
+
+/**
+ * 路径离舞台边缘多远。舞台越小越往回收一点（免得补丁顶到外面那圈拼布板的边），
+ * 但下限必须**罩得住最宽那块补丁的半宽**，否则补丁会骑到舞台外面去。
+ */
+function frameInset(w, h) {
+  const halfMax = Math.ceil(ringBaseMax(FRAME.tile, FRAME.gap) / 2) + 1;   // 5×8px 那块 → 23
+  return Math.max(halfMax, Math.min(FRAME.insetMax, Math.round(Math.min(w, h) * 0.045)));
 }
 
-/** 环上的一枚小补丁（只是个图形，点击交给正面的大卡片） */
+const _ringBaseCache = {};
+/** 所有补丁里最宽的那一块，在 scale=1 时占多少 px —— 用来估算这条路径放不放得下 */
+function ringBaseMax(tile, gap) {
+  const key = tile + ':' + gap;
+  if (_ringBaseCache[key]) return _ringBaseCache[key];
+  let max = 0;
+  S.meta.patches.forEach((p) => {
+    const o = p.orientations[0];
+    max = Math.max(max, o.cols * tile + (o.cols - 1) * gap, o.rows * tile + (o.rows - 1) * gap);
+  });
+  _ringBaseCache[key] = max || 29;
+  return _ringBaseCache[key];
+}
+
+/**
+ * 圆角矩形路径。从「下边正中」起步、按顺时针走一圈（第一步往左）——
+ * 跟圆环的走向完全一致：6 点钟方向往左走，正是钟面上的顺时针。
+ * 返回 { total, at(s) }，at 按弧长取点，坐标系是舞台左上角。
+ */
+function framePath(w, h, P) {
+  const r = Math.max(0, Math.min(FRAME.corner, (w - 2 * P) / 2, (h - 2 * P) / 2));
+  const half = w / 2;
+  const L = P; const R = w - P; const T = P; const B = h - P;
+  const quarter = (Math.PI / 2) * r;
+  // 屏幕坐标 y 朝下，所以角度 0=右、π/2=下、π=左、3π/2=上
+  const raw = [
+    { line: [[half, B], [L + r, B]] },
+    { arc: [[L + r, B - r], Math.PI / 2, Math.PI] },        // 左下角
+    { line: [[L, B - r], [L, T + r]] },
+    { arc: [[L + r, T + r], Math.PI, 1.5 * Math.PI] },      // 左上角
+    { line: [[L + r, T], [R - r, T]] },
+    { arc: [[R - r, T + r], 1.5 * Math.PI, 2 * Math.PI] },  // 右上角
+    { line: [[R, T + r], [R, B - r]] },
+    { arc: [[R - r, B - r], 0, Math.PI / 2] },              // 右下角
+    { line: [[R - r, B], [half, B]] },
+  ];
+  const parts = raw.map((g) => {
+    if (g.line) {
+      const [a, b] = g.line;
+      return { kind: 'line', a, b, len: Math.hypot(b[0] - a[0], b[1] - a[1]) };
+    }
+    return { kind: 'arc', c: g.arc[0], a0: g.arc[1], a1: g.arc[2], len: quarter };
+  });
+  const total = parts.reduce((sum, g) => sum + g.len, 0);
+
+  return {
+    total,
+    at(s) {
+      if (!total) return { x: half, y: B };
+      let t = ((s % total) + total) % total;      // 支持负数 / 超过一圈
+      for (let i = 0; i < parts.length; i += 1) {
+        const g = parts[i];
+        if (g.len <= 0) continue;
+        if (t > g.len) { t -= g.len; continue; }
+        const k = t / g.len;
+        if (g.kind === 'line') {
+          return { x: g.a[0] + (g.b[0] - g.a[0]) * k, y: g.a[1] + (g.b[1] - g.a[1]) * k };
+        }
+        const ang = g.a0 + (g.a1 - g.a0) * k;
+        return { x: g.c[0] + r * Math.cos(ang), y: g.c[1] + r * Math.sin(ang) };
+      }
+      return { x: half, y: B };
+    },
+  };
+}
+
+/**
+ * 环绕布局要给 .players 留的那条空带有多宽。
+ * 补丁是骑在路径上的，最宽的一块 5×8px 加描边，往外要伸 25px 左右，
+ * 所以空带必须 ≥ 路径内缩 + 25，否则补丁的描边就压到拼布板的边上了。
+ * 这里按 .players 的实际宽度给（它由 CSS 的 width: min(100%, 904px) 定死，
+ * 跟内边距无关，所以能安全地先量宽度再定内边距）。
+ */
+function frameBand(players) {
+  const w = players.getBoundingClientRect().width;
+  return Math.max(52, Math.min(56, Math.round(w * 0.062)));
+}
+
+/** 把 #frameStage 精确贴到 .players 的矩形上（两者都住在 .board-wrap 里） */
+function syncFrameBox() {
+  const frame = $('frameStage');
+  const wrap = $('boardWrap');
+  const players = $('playersWrap');
+  if (!frame || !wrap || !players) return null;
+  const a = wrap.getBoundingClientRect();
+  const b = players.getBoundingClientRect();
+  const w = Math.round(b.width);
+  const h = Math.round(b.height);
+  frame.style.left = Math.round(b.left - a.left) + 'px';
+  frame.style.top = Math.round(b.top - a.top) + 'px';
+  frame.style.width = w + 'px';
+  frame.style.height = h + 'px';
+  return { w, h };
+}
+
+/** 圆角矩形这一套的「摆哪儿」：等弧长摊开、全部正放、一样大 */
+function buildFrameLayout(box, N) {
+  const inset = frameInset(box.w, box.h);
+  const geo = framePath(box.w, box.h, inset);
+  const arc = geo.total / Math.max(1, N);
+  const scale = Math.min(1, Math.max(
+    (arc * 0.92) / ringBaseMax(FRAME.tile, FRAME.gap),
+    RING.minTile / FRAME.tile,
+  ));
+  const cx = box.w / 2;
+  const cy = box.h / 2;
+  return {
+    arc,
+    inset,
+    corner: Math.max(0, Math.min(FRAME.corner, (box.w - 2 * inset) / 2, (box.h - 2 * inset) / 2)),
+    pos(rel) {
+      const p = geo.at(rel * arc);
+      return { x: p.x - cx, y: p.y - cy, s: scale };
+    },
+    /** 中立指示物：停在起点「逆时针半格」的位置。起点在下边正中，
+     *  所以那一刻它正好落在下边那条直边上、往环里挪一点，不压到补丁。 */
+    neutral() {
+      const p = geo.at(geo.total - arc / 2);
+      return { x: p.x - cx, y: p.y - cy - 26 };
+    },
+  };
+}
+
+/** 圆环这一套的「摆哪儿」：正面永远在 6 点钟，越靠后画得越小 */
+function buildRingLayout(stage, N) {
+  const guide = stage.querySelector('.ring-guide');
+  const R = guide && guide.offsetWidth ? guide.offsetWidth / 2 : RING.radius;
+  const step = N ? 360 / N : 0;
+  const arc = N > 1 ? (2 * Math.PI * R) / N : 96;
+  const globalS = Math.min(1, (arc * 0.98) / ringBaseMax(RING.tile, RING.gap));
+  // 33 块全在环上的时候，最远那几块会被缩成一个点，啥也看不出来。
+  // 给一个「最小格子」地板保证它认得出来；地板不超过整体缩放，所以不会互相压到。
+  const floor = Math.min(RING.minTile / RING.tile, globalS);
+  return {
+    R,
+    seg: step,
+    pos(rel) {
+      const d = Math.min(rel, N - rel);            // 离正面有多远（按步数）
+      const dist = 0.45 + 0.55 * (1 - (d / Math.max(1, N / 2)) * 0.9);
+      const s = Math.max(globalS * dist, floor);
+      const th = ((180 + rel * step) * Math.PI) / 180;
+      return { x: R * Math.sin(th), y: -R * Math.cos(th), s };
+    },
+  };
+}
+
+/** 环上／框上的一枚小补丁。
+ *  格子边长不写死像素，交给容器上的 --rc-tile（环 6px、框 7px）——
+ *  这样同一枚 chip 在两种布局之间搬来搬去会自动换档，不用重建。
+ *  能不能点由 placeChips 决定：只有中立指示物前方、又买得起的那几块才可点。 */
 function makeRingChip(patch) {
   const chip = document.createElement('div');
   chip.className = 'ring-chip';
@@ -408,9 +565,9 @@ function makeRingChip(patch) {
   const o = patch.orientations[0];
   const grid = document.createElement('div');
   grid.className = 'rc-grid';
-  grid.style.gridTemplateColumns = `repeat(${o.cols}, ${RING.tile}px)`;
-  grid.style.gridAutoRows = `${RING.tile}px`;
-  grid.style.gap = `${RING.gap}px`;
+  grid.style.gridTemplateColumns = `repeat(${o.cols}, var(--rc-tile))`;
+  grid.style.gridAutoRows = 'var(--rc-tile)';
+  grid.style.gap = 'var(--rc-gap)';
   for (let r = 0; r < o.rows; r += 1) {
     for (let c = 0; c < o.cols; c += 1) {
       const cell = document.createElement('i');
@@ -426,11 +583,72 @@ function makeRingChip(patch) {
   return chip;
 }
 
+/**
+ * 把所有还没被买走的补丁摆到 host（就是 .ring-far）上。
+ * layout.pos(rel) 负责说「相对正面第 rel 名的那一块摆哪儿、缩多少」，
+ * 圆环和圆角矩形各自只提供自己的 pos，其余（建元素、标注、可点、退场）完全共用。
+ */
+function placeChips(host, ctx, layout, alive) {
+  const { circle, N, neutral, visible } = ctx;
+  const frontIds = new Set(visible);
+  const me = S.state.players[actSeat()];
+  const canPlayNow = canAct() && !S.leatherMode;
+
+  for (let i = 0; i < N; i += 1) {
+    const pid = circle[i];
+    // 相对正面的名次：0 就是中立指示物正前方那一块
+    const rel = (i - neutral + N) % N;
+    // 环绕时间板时，正面那 3 块由下方的大卡片代表，环上不再画一遍
+    // （环上补丁挨得紧，多画一遍会和金色指示物叠在一起）。
+    // 绕拼布板时框上很空，就全画出来，顺便把可选的那 3 块标注上。
+    if (ctx.skipFront && rel < 3 && frontIds.has(pid)) continue;
+
+    const patch = S.meta.patches.find((p) => p.id === pid);
+    if (!patch) continue;
+    alive.add(pid);
+
+    let chip = host.querySelector(`.ring-chip[data-patch-id="${pid}"]`);
+    if (!chip) {
+      chip = makeRingChip(patch);
+      chip.style.opacity = '0';                   // 新补丁淡入
+      host.appendChild(chip);
+      requestAnimationFrame(() => { chip.style.opacity = ''; });
+    }
+    const p = layout.pos(rel);
+    // left/top:50% 把原点摆在舞台正中，(x,y) 再把它挪到路径上；
+    // scale 走 transform 才能平滑过渡
+    chip.style.transform =
+      `translate(calc(-50% + ${p.x.toFixed(1)}px), calc(-50% + ${p.y.toFixed(1)}px)) ` +
+      `scale(${p.s.toFixed(3)})`;
+
+    // ---- 标注：中立指示物前方那 3 块 ----
+    // 买得起 → 金色实描边 + 呼吸光晕，而且可以直接点选；
+    // 买不起 → 只给一圈细虚线，告诉你「轮到它们了」，但别给点。
+    const inFront = frontIds.has(pid);
+    const clickable = inFront && canPlayNow && Boolean(me) && me.buttons >= patch.cost;
+    chip.classList.toggle('option', inFront);
+    chip.classList.toggle('selectable', clickable);
+    chip.classList.toggle('picked', Boolean(S.selected && S.selected.patchId === pid));
+    chip.onclick = clickable ? () => pickPatch(pid) : null;
+  }
+}
+
+/** 在环上／框上点中一块补丁 == 点下方那张大卡片 */
+function pickPatch(pid) {
+  S.selected = { patchId: pid };
+  S.oriIndex = 0;
+  S.locked = null;
+  render(S.state);
+}
+
 function renderRing() {
   const st = S.state;
   const stage = $('ringStage');
   const far = $('ringFar');
   const front = $('ringFront');
+  const panel = $('boardPanel');
+  const frame = $('frameStage');
+  const tok = $('ringNeutral');
   if (!stage || !far || !front) return;   // 老版本页面缓存里可能没有这套节点
 
   const me = st.players[actSeat()];
@@ -439,79 +657,97 @@ function renderRing() {
   const neutral = st.neutral || 0;
   const visible = (st.visible || []).slice(0, 3);
 
-  // ---- 标题：环上还剩多少块（环心被时间板占了，数量改记在标题里） ----
-  const label = $('ringLabel');
-  label.textContent = '补丁环 · 时间板';
-  const rest = document.createElement('span');
-  rest.className = 'ring-rest';
-  rest.textContent = N
-    ? `中立指示物前方 ${visible.length} 块 · 环上还剩 ${N} 块`
-    : '补丁已经全部买完';
-  label.appendChild(rest);
+  // 环绕方式：「绕拼布板」只给双人局，人少了多了都退回「环绕时间板」
+  const canSwitch = st.players.length === 2;
+  const wantFrame = canSwitch && S.layout === 'frame' && N > 0;
+  const wrap = $('boardWrap');
+  const players = $('playersWrap');
+  // 顺序很要紧：先挂布局类（.players 的宽度当场就定死了，而且不随内边距变），
+  // 再按这个宽度算出要留多宽的空带，最后才量舞台矩形。
+  // 反过来会量到切换前的旧尺寸，第一帧补丁就全摆错了。
+  if (wrap) wrap.classList.toggle('layout-frame', wantFrame);
+  if (players) players.style.padding = wantFrame ? frameBand(players) + 'px' : '';
+  let box = null;
+  if (wantFrame) {
+    const b = syncFrameBox();
+    if (b && b.w > 120 && b.h > 120) box = b;
+  }
+  const useFrame = Boolean(box);
+  const mode = useFrame ? 'frame' : 'ring';
+  if (wrap) wrap.classList.toggle('layout-frame', useFrame);
+  if (players && !useFrame) players.style.padding = '';
 
-  // ---- 环上的小补丁 ----
-  const step = N ? 360 / N : 0;
-  // 半径以 CSS 里那条虚线轨道为准，窄屏样式改了尺寸这里自动跟上
-  const guide = stage.querySelector('.ring-guide');
-  const R = guide && guide.offsetWidth ? guide.offsetWidth / 2 : RING.radius;
-  const arc = N > 1 ? (2 * Math.PI * R) / N : 96;
-  // 环上块数多的时候整体缩小，块数少了自然长大；相对大小（越远越小）一直保留
-  const globalS = Math.min(1, (arc * 0.98) / ringBaseMax());
-  const frontIds = new Set(visible);
-  const alive = new Set();
-
-  for (let i = 0; i < N; i += 1) {
-    const pid = circle[i];
-    // 相对正面的名次：0 就是中立指示物正前方那一块
-    const rel = (i - neutral + N) % N;
-    if (rel < 3 && frontIds.has(pid)) continue;   // 正面那 3 块由大卡片代表，环上不再画一遍
-
-    const patch = S.meta.patches.find((p) => p.id === pid);
-    if (!patch) continue;
-    alive.add(pid);
-
-    let chip = far.querySelector(`.ring-chip[data-patch-id="${pid}"]`);
-    if (!chip) {
-      chip = makeRingChip(patch);
-      chip.style.opacity = '0';                   // 新补丁淡入
-      far.appendChild(chip);
-      requestAnimationFrame(() => { chip.style.opacity = ''; });
-    }
-    const d = Math.min(rel, N - rel);              // 离正面有多远（按步数）
-    const dist = 0.45 + 0.55 * (1 - (d / Math.max(1, N / 2)) * 0.9);
-    // 33 块全在环上的时候，最远那几块会被缩成一个点，啥也看不出来。
-    // 给一个「最小格子」地板保证它认得出来；地板不超过整体缩放，所以不会互相压到。
-    const floor = Math.min(RING.minTile / RING.tile, globalS);
-    const s = Math.max(globalS * dist, floor);
-    const th = ((180 + rel * step) * Math.PI) / 180;
-    const x = Math.round(R * Math.sin(th));
-    const y = Math.round(-R * Math.cos(th));
-    // left/top:50% 把原点摆在环心，(x,y) 再把它挪到圆周上；scale 走 transform 才能平滑过渡
-    chip.style.transform =
-      `translate(calc(-50% + ${x}px), calc(-50% + ${y}px)) scale(${s.toFixed(3)})`;
+  // ---- 标题 + 环绕开关 ----
+  const title = $('ringLabel');
+  if (title) title.textContent = useFrame ? '补丁环 · 绕拼布板' : '补丁环 · 时间板';
+  const rest = $('ringRest');
+  if (rest) {
+    rest.textContent = N
+      ? `前方 ${visible.length} 块 · 环上剩 ${N} 块`
+      : '补丁已经全部买完';
+  }
+  const sw = $('layoutSwitch');
+  if (sw) {
+    sw.hidden = !canSwitch;
+    Array.from(sw.children).forEach((b) => {
+      b.classList.toggle('on', b.dataset.layout === mode);
+    });
   }
 
-  // 被买走的补丁从环上摘掉（下一帧才真正移除，先淡出）
+  // ---- 舞台归位：环 ⇄ 框，顺手把补丁和中立指示物搬过去 ----
+  if (panel) panel.classList.toggle('layout-frame', useFrame);
+  if (frame) frame.hidden = !useFrame;
+  const host = useFrame && frame ? frame : stage;
+  if (far.parentNode !== host) host.appendChild(far);
+  if (tok && tok.parentNode !== host) host.appendChild(tok);
+
+  // 补丁格子的边长也在这里定：环上 6px、框上 8px。
+  // 写成 CSS 变量挂在装补丁的那一层上，chip 本身不用重建就能换档。
+  far.style.setProperty('--rc-tile', (useFrame ? FRAME.tile : RING.tile) + 'px');
+  far.style.setProperty('--rc-gap', (useFrame ? FRAME.gap : RING.gap) + 'px');
+
+  const alive = new Set();
+  const ctx = { circle, N, neutral, visible, skipFront: !useFrame };
+  const layout = useFrame ? buildFrameLayout(box, N) : buildRingLayout(stage, N);
+
+  // 虚线路径要跟补丁脚下的路完全重合，所以这几个值由 JS 说了算
+  if (useFrame && frame) {
+    frame.style.setProperty('--fp', layout.inset + 'px');
+    frame.style.setProperty('--fcr', layout.corner + 'px');
+  }
+
+  placeChips(far, ctx, layout, alive);
+
+  // 被买走的补丁从舞台上摘掉（下一帧才真正移除，先淡出）
   Array.from(far.children).forEach((chip) => {
     if (alive.has(chip.dataset.patchId)) return;
+    chip.classList.remove('option', 'selectable', 'picked');
+    chip.onclick = null;
     chip.style.opacity = '0';
     chip.style.transform += ' scale(.2)';
     setTimeout(() => chip.remove(), 220);
   });
 
   // ---- 中立指示物：夹在「正前方那一块」逆时针一侧 ----
-  const tok = $('ringNeutral');
   if (tok) {
     if (!N) {
       tok.hidden = true;
     } else {
       tok.hidden = false;
-      const th = ((180 - step / 2) * Math.PI) / 180;
-      // 放在环内侧：环内正好是「时间板外沿 → 轨道」之间那条空带，
-      // 指示物停在这儿既不压到棋盘，也紧贴着它指向的那一格。
-      const rTok = Math.max(30, R - 14);
-      const x = Math.round(rTok * Math.sin(th));
-      const y = Math.round(-rTok * Math.cos(th));
+      let x;
+      let y;
+      if (useFrame) {
+        const p = layout.neutral();
+        x = Math.round(p.x);
+        y = Math.round(p.y);
+      } else {
+        const th = ((180 - layout.seg / 2) * Math.PI) / 180;
+        // 放在环内侧：环内正好是「时间板外沿 → 轨道」之间那条空带，
+        // 指示物停在这儿既不压到棋盘，也紧贴着它指向的那一格。
+        const rTok = Math.max(30, layout.R - 14);
+        x = Math.round(rTok * Math.sin(th));
+        y = Math.round(-rTok * Math.cos(th));
+      }
       tok.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`;
     }
   }
@@ -577,13 +813,8 @@ function renderRingFront(front, visible, me) {
     card.appendChild(id);
 
     if (canPlay) {
-      card.onclick = () => {
-        // 选中即进入预览态：鼠标在哪，补丁就跟着预览到哪
-        S.selected = { patchId: pid };
-        S.oriIndex = 0;
-        S.locked = null;
-        render(S.state);
-      };
+      // 选中即进入预览态：鼠标在哪，补丁就跟着预览到哪
+      card.onclick = () => pickPatch(pid);
     }
     front.appendChild(card);
   }
@@ -1221,8 +1452,20 @@ function escapeHtml(s) {
 /* ---------------- 更新日志 ---------------- */
 const CHANGELOG = [
   {
-    v: 'v1.4',
+    v: 'v1.4.1',
     date: '当前',
+    items: [
+      '<b>双人局多了一种环绕方式：绕拼布板</b>。补丁环不再只是那个圆 —— 现在整个环从圆变成贴着两块拼布板的<b>圆角矩形</b>，补丁沿四条边等距摊开、<b>全部正着放、一样大</b>，所以每一块都看得清清楚楚，再没有「缩成一个小点」的角落。在棋盘标题右边那个「环绕时间板 / 绕拼布板」开关里切，<b>只影响自己这块屏幕</b>。',
+      '<b>可以选的补丁被标出来了</b>。中立指示物前方那 3 块，在环上／框上都会加一圈金色描边；<b>买得起的那几块还能直接点</b>，点一下就跟点下方那张大卡片一样进入落点预览。买不起的只画一圈细虚线，告诉你「轮到它们了」但不给点。',
+      '<b>绕拼布板时补丁比环上大一档</b>：格子从 6px 放到 8px（最大那块 44px），加上四条直边本来就放得开，形态一眼可辨。',
+      '<b>环绕舞台精确贴合拼布板区域</b>：两块板外面留出一条空带，补丁骑在这条带子上转，不会压到棋盘；窗口一缩放就重新量一遍，位置不会错位。',
+      '<b>人机对手改名 wzzzhhhhh</b>。轻松难度会显示成 wzzzhhhhh·轻松。',
+      '<b>版本号说明</b>：编号是连续的 <b>1.0 → 1.1 → 1.2 → 1.3 → 1.4 → 1.4.1</b>。1.1 的源码在归档流程建起来之前就被后一版原地覆盖了，没有留下独立产物，归档里因此从 1.0 直接跳到 1.2 —— 这一条只是说明，不是功能。',
+    ],
+  },
+  {
+    v: 'v1.4',
+    date: '上一版',
     items: [
       '<b>补丁环不再单独挂在边上，而是把时间板整个包进环心</b>：环当外圈、时间板缩成圆心那块棋盘，两者合成一块「棋盘」。买走一块补丁，中立指示物沿环前移一格，整圈平滑地转过去。',
       '<b>时间板改成 9 列 × 6 行</b>，正好 54 格，一格不剩不空。格子仍然是 26px，比原来还大一点，数字更好认。',
@@ -1234,7 +1477,7 @@ const CHANGELOG = [
   },
   {
     v: 'v1.3',
-    date: '上一版',
+    date: '更早',
     items: [
       '<b>补上可视的旋转补丁环</b>：中间那圈不再是三张孤零零的卡片，而是完整的补丁环 —— 所有还没被买走的补丁沿环排布、离正面越远画得越小，环心写着还剩几块。买走一块，中立指示物前移一格，整圈平滑地转过去。',
       '<b>按原版修正了环的顺序</b>：环每局重新洗牌（位置都不一样）；那块 2×1 的补丁应该排在环的最后一块，开局可选的三块里没有它。以前把它摆在环首，等于白送。',
@@ -1348,6 +1591,27 @@ $('btnFlip').onclick = flip;
 $('btnConfirm').onclick = confirmPlace;
 $('btnAdvance').onclick = doAdvance;
 
+/**
+ * 双人局的环绕方式开关：环绕时间板（圆）⇄ 绕拼布板（圆角矩形）。
+ * 纯观感，只影响自己这块屏幕，所以直接存本地，不发给服务端。
+ */
+$('layoutSwitch').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-layout]');
+  if (!btn || btn.classList.contains('on')) return;
+  S.layout = btn.dataset.layout === 'frame' ? 'frame' : 'ring';
+  try { localStorage.setItem('pwLayout', S.layout); } catch (err) { /* 忽略 */ }
+  if (S.state) render(S.state);
+});
+
+// 窗口尺寸一变，环的半径（从 CSS 反算）和圆角矩形的舞台都得重新量一遍，
+// 否则补丁会继续停在旧位置上。防抖一下，拖窗口时别每帧都重排。
+let _ringResizeTimer = 0;
+window.addEventListener('resize', () => {
+  if (!S.state || !$('game').classList.contains('active')) return;
+  clearTimeout(_ringResizeTimer);
+  _ringResizeTimer = setTimeout(() => { if (S.state) render(S.state); }, 120);
+});
+
 // 日志区：滚回底部就收掉提示按钮
 $('log').addEventListener('scroll', () => { if (logAtBottom()) setLogJump(false); });
 $('btnLogJump').onclick = logToBottom;
@@ -1409,6 +1673,27 @@ window.__pw = {
   get selected() { return S.selected; },
   get locked() { return S.locked; },
   get hover() { return S.hover; },
+  /** 当前环绕方式：'ring' | 'frame' */
+  get layout() { return S.layout; },
+  /** 「绕拼布板」布局下舞台与补丁的实际几何，给联调脚本量尺寸用 */
+  frameGeom() {
+    const frame = $('frameStage');
+    const far = $('ringFar');
+    if (!frame || frame.hidden || !far) return null;
+    const r = frame.getBoundingClientRect();
+    const chips = Array.from(far.querySelectorAll('.ring-chip')).map((c) => {
+      const b = c.getBoundingClientRect();
+      return {
+        id: c.dataset.patchId,
+        cls: c.className,
+        cx: b.left + b.width / 2,
+        cy: b.top + b.height / 2,
+        w: b.width,
+        h: b.height,
+      };
+    });
+    return { x: r.left, y: r.top, w: Math.round(r.width), h: Math.round(r.height), chips };
+  },
   actSeat,
   canAct,
   /** 当前该谁动手的那块拼布板元素 */
@@ -1426,6 +1711,11 @@ window.__pw = {
 async function boot() {
   const saved = localStorage.getItem('pwName');
   if (saved) $('playerName').value = saved;
+
+  // 环绕方式是个人的观感偏好，跟着浏览器留着
+  try {
+    if (localStorage.getItem('pwLayout') === 'frame') S.layout = 'frame';
+  } catch (e) { /* 忽略 */ }
 
   const sel = $('playerCount');
   for (let i = 2; i <= 6; i += 1) {

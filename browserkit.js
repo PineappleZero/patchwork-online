@@ -208,5 +208,5 @@ async function screenshot(ws, file) {
 
 
 module.exports = {
-  launchEdge, evaluate, waitFor, screenshot, collectErrors, sleep, PORT, SHOT_DIR,
+  launchEdge, evaluate, waitFor, screenshot, collectErrors, sleep, PORT, SHOT_DIR, cdp,
 };

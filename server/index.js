@@ -248,7 +248,7 @@ function startGame(room) {
   const list = [];
   for (let i = 0; i < room.capacity; i += 1) {
     if (room.botSeats.has(i)) {
-      list.push({ name: room.botLevel === 'easy' ? '电脑·轻松' : '电脑', bot: true });
+      list.push({ name: room.botLevel === 'easy' ? 'wzzzhhhhh·轻松' : 'wzzzhhhhh', bot: true });
     } else if (room.local) {
       list.push({ name: cleanName(i === 0 ? room.localNames[0] : room.localNames[i], `玩家${i + 1}`) });
     } else {
@@ -647,7 +647,7 @@ server.on('upgrade', (req, socket) => {
           // 单机两种模式：建完房直接开局，不用等人
           room.localNames = [
             name,
-            cleanName(msg.name2, room.mode === 'local' ? '玩家二' : '电脑'),
+            cleanName(msg.name2, room.mode === 'local' ? '玩家二' : 'wzzzhhhhh'),
           ];
           startGame(room);
         }

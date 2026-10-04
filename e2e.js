@@ -311,7 +311,7 @@ function chooseLeatherSpot(board) {
   check('人机模式标记正确', j1.mode === 'solo' && j1.local === false, j1.mode);
   const soloStart = await s1.wait((m) => m.type === 'state' && m.started);
   check('人机对战建房即开局，不用等人', soloStart.started === true);
-  check('第二位玩家是电脑', soloStart.players[1].bot === true && /电脑/.test(soloStart.players[1].name),
+  check('第二位玩家是电脑', soloStart.players[1].bot === true && /wzzzhhhhh/.test(soloStart.players[1].name),
     soloStart.players[1].name);
   check('只有 2 位玩家', soloStart.players.length === 2);
 

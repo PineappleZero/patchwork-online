@@ -1,8 +1,9 @@
 'use strict';
 
 /*
- * v1.4 界面联调：用 CDP 驱动本机 Edge，逐屏截图并断言关键布局。
- * 覆盖：主菜单（含联机网址）/ 人机对战 / 补丁环包住时间板 / 跳过按钮高亮 / 事件纪要滚动 / 更新日志 / 六人联机。
+ * v1.4.1 界面联调：用 CDP 驱动本机 Edge，逐屏截图并断言关键布局。
+ * 覆盖：主菜单（含联机网址）/ 人机对战 / 补丁环包住时间板 / 绕拼布板的圆角矩形环绕 /
+ *       可选补丁的标注与点选 / 跳过按钮高亮 / 事件纪要滚动 / 更新日志 / 六人联机。
  *
  * 用两个 Edge 实例：A 跑单机部分，B 跑联机部分。
  * 因为「返回主菜单」会整页重载，而 localStorage 里还存着上一局的座位，
@@ -159,6 +160,8 @@ function ok(cond, label, extra) {
         gridCols: getComputedStyle(document.getElementById('playersWrap')).gridTemplateColumns.split(' ').length,
         bot: !!botTag,
         botText: botTag ? botTag.textContent : '',
+        botName: (document.querySelector('#playersWrap .player-card .pc-tag.bot')
+          ? botTag.closest('.player-card').querySelector('.pc-name').textContent : ''),
         mode: document.getElementById('modeTag').textContent,
         copyHidden: getComputedStyle(document.getElementById('btnCopy')).display === 'none',
         logs: document.querySelectorAll('#log div').length,
@@ -166,6 +169,7 @@ function ok(cond, label, extra) {
     })()`);
     ok(solo.n === 2, '渲染 2 张玩家卡');
     ok(solo.bot, '电脑席位带「电脑」标签', solo.botText);
+    ok(solo.botName === 'wzzzhhhhh', '人机对手叫 wzzzhhhhh', solo.botName);
     ok(solo.gridCols === 2, '双人两列并排', '实际 ' + solo.gridCols + ' 列');
     ok(solo.mode === '人机对战', '模式标签正确', solo.mode);
     ok(solo.copyHidden, '单机模式隐藏「复制邀请」');
@@ -221,6 +225,7 @@ function ok(cond, label, extra) {
           [tr.x, tr.y + tr.height], [tr.x + tr.width, tr.y + tr.height]]
           .every((p) => Math.hypot(p[0] - cx, p[1] - cy) < R),
         label: document.getElementById('ringLabel').textContent,
+        rest: document.getElementById('ringRest').textContent,
         neutralShown: !document.getElementById('ringNeutral').hidden,
         neutralInStage: (function(){
           const n = document.getElementById('ringNeutral').getBoundingClientRect();
@@ -249,11 +254,122 @@ function ok(cond, label, extra) {
     ok(ring.gapRingToCorner >= 6,
       '轨道半径大于棋盘半对角线，环真「包住」了时间板',
       `半径余量 ${ring.gapRingToCorner}px（棋盘角 ${ring.corner}px）`);
-    ok(ring.label.indexOf('时间板') >= 0 && ring.label.indexOf(String(ring.N)) >= 0,
-      '标题同时写着时间板和环上剩余块数', ring.label);
+    ok(ring.label.indexOf('时间板') >= 0, '标题写着「补丁环 · 时间板」', ring.label);
+    ok(ring.rest.indexOf(String(ring.N)) >= 0,
+      '标题右边标着环上剩余块数', ring.rest);
     ok(ring.neutralShown && ring.neutralInStage, '中立指示物画在环上且没被裁掉');
     ok(ring.overflow <= 0, '中间列没有被撑出滚动条', 'overflow=' + ring.overflow);
     await screenshot(ws, 'v14-1-ring.png');
+
+    console.log('\n[2b2] 绕拼布板：圆角矩形框住两块拼布板（v1.4.1 的主角）');
+    ok(await evaluate(ws, `!document.getElementById('layoutSwitch').hidden`),
+      '桌上是两个人，所以「环绕时间板 / 绕拼布板」开关现身了');
+    await evaluate(ws, `document.querySelector('#layoutSwitch button[data-layout="frame"]').click()`);
+    await sleep(700);
+    const frame = await evaluate(ws, `(function(){
+      const g = window.__pw.frameGeom();
+      if (!g) return { err: 'no-frame' };
+      const stage = document.getElementById('frameStage');
+      const guide = stage.querySelector('.frame-guide');
+      const sr = stage.getBoundingClientRect();
+      const gr = guide.getBoundingClientRect();
+      const players = document.getElementById('playersWrap').getBoundingClientRect();
+      const cards = Array.from(document.querySelectorAll('#playersWrap .player-card'))
+        .map((c) => c.getBoundingClientRect());
+      const tb = document.getElementById('timeboard');
+      const chips = g.chips;
+      const inside = chips.filter((c) => c.cx - c.w / 2 >= sr.x - 2 && c.cy - c.h / 2 >= sr.y - 2 &&
+        c.cx + c.w / 2 <= sr.x + sr.width + 2 && c.cy + c.h / 2 <= sr.y + sr.height + 2).length;
+      const radii = chips.map((c) => Math.hypot(c.cx - (sr.x + sr.width / 2), c.cy - (sr.y + sr.height / 2)));
+      const marked = chips.filter((c) => /option|selectable/.test(c.cls));
+      const markedXs = marked.map((c) => Math.round(c.cx)).sort((a, b) => a - b);
+      const overlapped = chips.filter((c) => cards.some((r) => c.cx + c.w / 2 > r.left + 2 &&
+        c.cx - c.w / 2 < r.right - 2 && c.cy + c.h / 2 > r.top + 2 && c.cy - c.h / 2 < r.bottom - 2)).length;
+      const n = document.getElementById('ringNeutral').getBoundingClientRect();
+      return {
+        layout: window.__pw.layout,
+        stageHidden: stage.hidden,
+        // 框上那条圆角虚线（.frame-guide）要现身；环上那个虚线圆（.ring-guide）要收起来
+        frameGuideShown: getComputedStyle(guide).display !== 'none',
+        ringGuideHidden: getComputedStyle(document.querySelector('#ringStage .ring-guide')).display === 'none',
+        frameW: Math.round(sr.width), frameH: Math.round(sr.height),
+        playersW: Math.round(players.width), playersH: Math.round(players.height),
+        frameInsidePlayers: sr.left >= players.left - 1 && sr.right <= players.right + 1 &&
+          sr.top >= players.top - 1 && sr.bottom <= players.bottom + 1,
+        N: window.__pw.state.circle.length,
+        chips: chips.length,
+        inside: inside,
+        minR: Math.round(Math.min.apply(null, radii)),
+        maxR: Math.round(Math.max.apply(null, radii)),
+        option: chips.filter((c) => /option/.test(c.cls)).length,
+        selectable: chips.filter((c) => /selectable/.test(c.cls)).length,
+        markedInOneRow: new Set(marked.map((c) => Math.round(c.cy))).size <= 1,
+        markedSpread: markedXs.length >= 2 ? markedXs[markedXs.length - 1] - markedXs[0] : 0,
+        cardsInside: cards.every((c) => c.left >= gr.left - 1 && c.right <= gr.right + 1 &&
+          c.top >= gr.top - 1 && c.bottom <= gr.bottom + 1),
+        overlapped: overlapped,
+        tbCols: getComputedStyle(tb).gridTemplateColumns.split(' ').length,
+        tbCells: tb.children.length,
+        neutralInFrame: n.width > 0 && n.left >= sr.left - 1 && n.right <= sr.right + 1 &&
+          n.top >= sr.top - 1 && n.bottom <= sr.bottom + 1,
+        title: document.getElementById('ringLabel').textContent,
+        overflow: document.getElementById('centerCol').scrollHeight - document.getElementById('centerCol').clientHeight,
+      };
+    })()`);
+    ok(!frame.err && frame.layout === 'frame', '切到了「绕拼布板」', frame.err || frame.layout);
+    ok(!frame.stageHidden && frame.frameGuideShown && frame.ringGuideHidden,
+      '框的舞台和圆角虚线现身，环上那个虚线圆收起来');
+    ok(frame.frameInsidePlayers &&
+      Math.abs(frame.frameW - frame.playersW) <= 2 && Math.abs(frame.frameH - frame.playersH) <= 2,
+      '环绕舞台精确贴住了两块拼布板那一块',
+      `${frame.frameW}×${frame.frameH} vs ${frame.playersW}×${frame.playersH}`);
+    ok(frame.chips === frame.N, '还没被买走的补丁全都搬到框上了',
+      `chips=${frame.chips} N=${frame.N}`);
+    ok(frame.inside === frame.chips, '没有一个补丁跑出环绕舞台', `出界 ${frame.chips - frame.inside} 个`);
+    ok(frame.maxR - frame.minR > 60,
+      '路径明显不是圆 —— 到中心的距离差得很远，是圆角矩形',
+      `半径 ${frame.minR}~${frame.maxR}`);
+    ok(frame.option === 3 && frame.selectable >= 1 && frame.selectable <= 3,
+      '正面前 3 块被标注出来，买得起的那几块可以点',
+      `标注 ${frame.option} 块，可点 ${frame.selectable} 块`);
+    ok(frame.markedInOneRow && frame.markedSpread > 40,
+      '那 3 块在下边排成一行、彼此拉开，看得清也点得着', `间距 ${frame.markedSpread}px`);
+    ok(frame.cardsInside, '两块拼布板都落在圆角矩形里面');
+    ok(frame.overlapped === 0, '补丁没压到拼布板上', `压住 ${frame.overlapped} 个`);
+    ok(frame.tbCols === 9 && frame.tbCells === 54, '时间板照旧 9 列 54 格，没被换布局弄坏');
+    ok(frame.neutralInFrame, '中立指示物搬到框上了');
+    ok(frame.title.indexOf('绕拼布板') >= 0, '面板标题跟着改口', frame.title);
+    ok(frame.overflow <= 0, '换成框布局没把中间列撑出滚动条', 'overflow=' + frame.overflow);
+    await screenshot(ws, 'v141-1-frame.png');
+
+    console.log('\n[2b3] 点框上的补丁就能选中它');
+    const picked = await evaluate(ws, `(function(){
+      const el = document.querySelector('#frameStage .ring-chip.selectable');
+      if (!el) return { err: '没有可点的补丁' };
+      const id = el.dataset.patchId;
+      el.click();
+      return { id: id, selected: window.__pw.selected && window.__pw.selected.patchId };
+    })()`);
+    ok(picked.selected === picked.id, '点框上带金边的补丁，就等于点下方那张卡片',
+      `点了 ${picked.id}，选中 ${picked.selected}`);
+
+    console.log('\n[2b4] 切回「环绕时间板」');
+    await evaluate(ws, `document.querySelector('#layoutSwitch button[data-layout="ring"]').click()`);
+    await sleep(600);
+    const back = await evaluate(ws, `(function(){
+      return {
+        layout: window.__pw.layout,
+        stageHidden: document.getElementById('frameStage').hidden,
+        guideShown: getComputedStyle(document.querySelector('#ringStage .ring-guide')).display !== 'none',
+        farInStage: document.getElementById('ringFar').parentNode.id === 'ringStage',
+        chips: document.getElementById('ringFar').children.length,
+        N: window.__pw.state.circle.length,
+      };
+    })()`);
+    ok(back.layout === 'ring' && back.stageHidden && back.guideShown, '切回环布局，框收起来');
+    ok(back.farInStage && back.chips === back.N - 3,
+      '补丁搬回环上，正面前 3 块又交回给大卡片',
+      `chips=${back.chips} N=${back.N}`);
 
     console.log('\n[2c] 只剩跳过时，「跳过领纽扣」会跳出来');
     // 分三步：先把纽扣清零并重绘，等放大动画跑完再读样式，最后恢复原状。
@@ -350,13 +466,18 @@ function ok(cond, label, extra) {
         vers: m.querySelectorAll('.ver').length,
         first: (m.querySelector('.ver h3') || {}).textContent || '',
         items: m.querySelectorAll('.ver:first-child li').length,
+        // h3 里除了版本号还跟着一个日期小标签，所以只取开头的 v1.2.3
+        versions: Array.from(m.querySelectorAll('.ver h3'))
+          .map((h) => (h.textContent.match(/^v[\\d.]+/) || [''])[0]),
       };
     })()`);
     ok(cl.show, '更新日志弹层能打开');
     ok(cl.vers >= 3, '包含 3 个及以上版本', '实际 ' + cl.vers);
-    ok(cl.first.indexOf('v1.4') === 0, '首条是 v1.4', cl.first);
-    ok(cl.items >= 5, 'v1.4 条目不少于 5 条', '实际 ' + cl.items);
-    await screenshot(ws, 'v14-2-changelog.png');
+    ok(cl.first.indexOf('v1.4.1') === 0, '首条是 v1.4.1', cl.first);
+    ok(cl.items >= 5, 'v1.4.1 条目不少于 5 条', '实际 ' + cl.items);
+    ok(cl.versions.slice(0, 3).join(',') === 'v1.4.1,v1.4,v1.3',
+      '版本号是连续的（含补记的 1.1）', cl.versions.join(' / '));
+    await screenshot(ws, 'v141-2-changelog.png');
 
     /* ================= B：联机部分 ================= */
     const wsb = edgeB.ws;
