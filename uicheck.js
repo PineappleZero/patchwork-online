@@ -1,11 +1,12 @@
 'use strict';
 
 /*
- * v1.5 界面联调：用 CDP 驱动本机 Edge，逐屏截图并断言关键布局。
- * 覆盖：主菜单（左右并排 + 艺术字 + 联机网址）/ 音效开关 / 人机对战 /
- *       双人默认「绕拼布板」的放大轨道与中立棋子 / 补丁环包住时间板 /
- *       可选补丁的标注与点选 / 魔改版混沌拼布 / 跳过按钮高亮 / 事件纪要滚动 /
- *       更新日志 / 六人联机。
+ * v1.5.1 界面联调：用 CDP 驱动本机 Edge，逐屏截图并断言关键布局。
+ * 覆盖：主菜单（布片标题 + 拼布带 + 粗分隔线 + 左右并排 + 联机网址）/
+ *       规则弹层按版本分开显示（主菜单看全套、对局里只看当前这一版）/
+ *       音效开关 / 人机对战 / 双人默认「绕拼布板」的放大轨道与中立棋子 /
+ *       补丁环包住时间板 / 可选补丁的标注与点选 / 魔改版混沌拼布 /
+ *       跳过按钮高亮 / 事件纪要滚动 / 更新日志 / 六人联机。
  *
  * 用两个 Edge 实例：A 跑单机部分，B 跑联机部分。
  * 因为「返回主菜单」会整页重载，而 localStorage 里还存着上一局的座位，
@@ -125,9 +126,23 @@ function ok(cond, label, extra) {
         chaosCards: document.querySelectorAll('.mode-card.chaos').length,
         menuGridCols: getComputedStyle(q('.menu-grid')).gridTemplateColumns.split(' ').length,
         sfxToggles: document.querySelectorAll('[data-sfx-toggle]').length,
-        // 艺术字：标题的填充被裁到文字里，且没有文字色 —— 两者同时成立才算真做了
-        artClip: (getComputedStyle(titleEl).webkitBackgroundClip || getComputedStyle(titleEl).backgroundClip),
-        artColor: getComputedStyle(titleEl).color,
+        // v1.5.1：标题改成两块「布片」，每块要有布纹底 + 一圈虚线缝脚
+        titleTiles: document.querySelectorAll('.title .tile').length,
+        tileBg: (() => { const t = q('.title .tile'); return t ? getComputedStyle(t).backgroundImage : ''; })(),
+        tileStitch: (() => {
+          const t = q('.title .tile');
+          if (!t) return '';
+          const cs = getComputedStyle(t, '::before');
+          return cs.borderTopStyle + '|' + cs.borderTopWidth;
+        })(),
+        // v1.5.1：标题下面的拼布带 / 纽扣 / 砂漏，以及切分区的粗线
+        deco: {
+          strip: document.querySelectorAll('.brand-deco .quilt-strip').length,
+          btn: document.querySelectorAll('.brand-deco .deco-btn').length,
+          glass: document.querySelectorAll('.brand-deco .deco-hourglass').length,
+        },
+        menuRules: document.querySelectorAll('.menu-rule').length,
+        rulesBtnStrong: !!q('#btnRulesMenu').classList.contains('primary'),
         counts: Array.from(document.querySelectorAll('#playerCount option')).map((o) => o.value),
         visible: rect.top >= -2 && rect.bottom <= window.innerHeight + 2,
         h: Math.round(rect.height), vh: window.innerHeight,
@@ -140,8 +155,15 @@ function ok(cond, label, extra) {
       `经典 ${menu.classicCards} / 魔改 ${menu.chaosCards}`);
     ok(menu.menuGridCols === 2, '单机与联机两块左右并排', menu.menuGridCols + ' 列');
     ok(menu.sfxToggles === 2, '主菜单和对局页各有一个音效开关', '实际 ' + menu.sfxToggles);
-    ok(menu.artClip === 'text' && /rgba\(0, 0, 0, 0\)|transparent/.test(menu.artColor),
-      '标题是渐变艺术字（填充裁到文字里）', menu.artClip + ' / ' + menu.artColor);
+    ok(menu.titleTiles === 2, '标题是两块「布片」拼出来的', '实际 ' + menu.titleTiles + ' 块');
+    ok(/linear-gradient|repeating-linear-gradient/.test(menu.tileBg),
+      '布片有布纹底（斜纹 + 渐变）', (menu.tileBg || '').slice(0, 46));
+    ok(/dashed/.test(menu.tileStitch) && parseFloat(menu.tileStitch.split('|')[1]) >= 1.5,
+      '布片四周是虚线缝脚', menu.tileStitch);
+    ok(menu.deco.strip === 1 && menu.deco.btn === 1 && menu.deco.glass === 1,
+      '标题下面配了「拼布带 + 纽扣 + 砂漏」', JSON.stringify(menu.deco));
+    ok(menu.menuRules === 3, '主菜单用 3 条粗线把分区切开', '实际 ' + menu.menuRules);
+    ok(menu.rulesBtnStrong, '「规则与图例」在主菜单底部且被强调（不再是 .tiny）');
     ok(menu.counts.join(',') === '2,3,4,5,6', '人数可选 2~6', menu.counts.join(','));
     ok(menu.visible, '菜单整卡在视口内', `高 ${menu.h} / 视口 ${menu.vh}`);
 
@@ -160,6 +182,91 @@ function ok(cond, label, extra) {
     ok(net.shown && /^http:\/\/\d+\.\d+\.\d+\.\d+:\d+$/.test(net.text),
       '主菜单显示联机网址（不用再去 PowerShell 里找）', net.text);
     ok(net.hasBtn && net.fits, '网址后面有复制按钮，且没被挤出视口');
+
+    /* ============ v1.5.1：规则弹层按版本分开显示 ============ */
+    console.log('\n[1b] 规则按版本分开显示（v1.5.1）');
+    await evaluate(ws, `document.getElementById('btnRulesMenu').click()`);
+    await waitFor(ws, `document.getElementById('rulesModal').classList.contains('show')`, 6000, '规则弹层弹出');
+    await sleep(250);
+    await screenshot(ws, 'v151-1-rules-menu.png');
+
+    const rBoth = await evaluate(ws, `window.__pw.rulesView()`);
+    const secTitles = rBoth.sections.map((s) => s.title);
+    const iGoal = secTitles.findIndex((t) => t.indexOf('目标') === 0);
+    const iChaosSec = secTitles.findIndex((t) => t.indexOf('魔改版') === 0);
+    ok(rBoth.scope === 'both', '从主菜单打开：两套规则一起看', rBoth.scope);
+    ok(rBoth.tag === '', '两套一起看时，标题不挂版本标记', '实际「' + rBoth.tag + '」');
+    ok(iGoal === 0 && iChaosSec === secTitles.length - 1 && iChaosSec > iGoal,
+      '经典规则全部排在前面，魔改版整节压在最后',
+      `「目标」@${iGoal} / 魔改 @${iChaosSec} / 共 ${secTitles.length} 节`);
+    ok(rBoth.sections.every((s) => s.shown), '两套一起看时所有小节都显示');
+    ok(rBoth.variants.length >= 6 && rBoth.variants.every((v) => v.shown),
+      '两套一起看时，每处版本差异都要显示',
+      rBoth.variants.map((v) => v.kind).join(','));
+    ok(rBoth.variants.some((v) => v.kind === 'classic') &&
+      rBoth.variants.some((v) => v.kind === 'chaos'),
+      '经典与魔改的差异都在（得分公式 / 7×7 / 可选块数 / 环上块数）');
+    ok(rBoth.chaosLegend, '魔改版专属的「混沌格」图例行也在');
+
+    // 滚到最底看一眼：魔改版那一节确实压在全部经典规则之后
+    await evaluate(ws, `(function(){
+      const card = document.querySelector('#rulesModal .overlay-card');
+      const body = document.querySelector('#rulesModal .ov-body');
+      [card, body].forEach((el) => { if (el) el.scrollTop = el.scrollHeight; });
+      return 'ok';
+    })()`);
+    await sleep(350);
+    await screenshot(ws, 'v151-5-rules-bottom.png');
+    const tailSec = await evaluate(ws, `(function(){
+      const secs = Array.from(document.querySelectorAll('#rulesModal .rules-sec'));
+      const last = secs[secs.length - 1];
+      const r = last.getBoundingClientRect();
+      return {
+        title: last.querySelector('h3').textContent,
+        dashed: getComputedStyle(last).borderTopStyle,
+        bottom: Math.round(r.bottom), vh: window.innerHeight,
+      };
+    })()`);
+    ok(tailSec.title.indexOf('魔改版') === 0, '滚到底，最后一节就是魔改版', tailSec.title);
+    ok(tailSec.dashed === 'dashed', '魔改版那节上面缝了一道粗虚线，跟经典部分分开',
+      tailSec.dashed);
+    ok(tailSec.bottom <= tailSec.vh + 2, '整节内容真的能滚到底', `底 ${tailSec.bottom} / 视口 ${tailSec.vh}`);
+
+    // 进一局经典，再打开规则 → 只该看到经典那一套
+    await evaluate(ws, `document.getElementById('btnRulesClose').click()`);
+    await sleep(200);
+    await evaluate(ws, `document.getElementById('btnSolo').click()`);
+    await waitFor(ws, `document.getElementById('game').classList.contains('active')`, 8000, '进入经典对局');
+    await waitFor(ws, `document.getElementById('modeTag').textContent.indexOf('人机') >= 0`, 6000, '经典人机开局');
+    await sleep(700);
+    await evaluate(ws, `document.getElementById('btnRules').click()`);
+    await waitFor(ws, `document.getElementById('rulesModal').classList.contains('show')`, 6000, '对局里弹出规则');
+    await sleep(250);
+    await screenshot(ws, 'v151-2-rules-classic.png');
+
+    const rClassic = await evaluate(ws, `window.__pw.rulesView()`);
+    const classicChaosSec = rClassic.sections.find((s) => s.rules === 'chaos');
+    ok(rClassic.scope === 'classic', '对局里打开：按这一局的版本显示', rClassic.scope);
+    ok(rClassic.tag === '经典版', '标题右边挂上「经典版」', rClassic.tag);
+    ok(classicChaosSec && !classicChaosSec.shown,
+      '经典局里看不到「魔改版 · 混沌拼布」那一节',
+      classicChaosSec ? classicChaosSec.title : '找不到该节');
+    ok(rClassic.variants.filter((v) => v.kind === 'classic').every((v) => v.shown) &&
+      rClassic.variants.filter((v) => v.kind === 'chaos').every((v) => !v.shown),
+      '经典的数字留着、魔改的数字藏起来',
+      rClassic.variants.map((v) => v.kind + ':' + v.shown).join(' '));
+    ok(!rClassic.chaosLegend, '经典局里也没有「混沌格」图例');
+
+    await evaluate(ws, `document.getElementById('btnRulesClose').click()`);
+    await sleep(150);
+    // 「返回主菜单」会整页重载，先把对局中离开的确认放行
+    await evaluate(ws, `(function(){
+      window.confirm = function(){ return true; };
+      document.getElementById('btnBack').click();
+      return 'ok';
+    })()`);
+    await waitFor(ws, `document.getElementById('menu').classList.contains('active')`, 12000, '回到主菜单');
+    await sleep(600);
 
     console.log('\n[2] 人机对战');
     await evaluate(ws, `document.getElementById('btnSolo').click()`);
@@ -545,11 +652,11 @@ function ok(cond, label, extra) {
     })()`);
     ok(cl.show, '更新日志弹层能打开');
     ok(cl.vers >= 3, '包含 3 个及以上版本', '实际 ' + cl.vers);
-    ok(cl.first.indexOf('v1.5') === 0, '首条是 v1.5', cl.first);
-    ok(cl.items >= 6, 'v1.5 条目不少于 6 条', '实际 ' + cl.items);
-    ok(cl.versions.slice(0, 4).join(',') === 'v1.5,v1.4.1,v1.4,v1.3',
+    ok(cl.first.indexOf('v1.5.1') === 0, '首条是 v1.5.1', cl.first);
+    ok(cl.items >= 4, 'v1.5.1 条目不少于 4 条', '实际 ' + cl.items);
+    ok(cl.versions.slice(0, 5).join(',') === 'v1.5.1,v1.5,v1.4.1,v1.4,v1.3',
       '版本号是连续的（含补记的 1.1）', cl.versions.join(' / '));
-    await screenshot(ws, 'v15-3-changelog.png');
+    await screenshot(ws, 'v151-4-changelog.png');
 
     console.log('\n[4b] 音效开关：每个界面都能开关');
     await evaluate(ws, `document.getElementById('btnChangelogClose').click()`);
@@ -681,6 +788,26 @@ function ok(cond, label, extra) {
       '时间板上多出 3 个混沌格，落在第 12 / 30 / 48 格', chaos.chaosIdx);
     ok(chaos.boxChaos, '对局区也标了变体，方便样式区分');
     await screenshot(ws, 'v15-4-chaos.png');
+
+    // v1.5.1：魔改局里打开规则，只该看到魔改那一套
+    console.log('\n[4c2] 魔改局里的规则只显示魔改那套');
+    await evaluate(ws, `document.getElementById('btnRules').click()`);
+    await waitFor(ws, `document.getElementById('rulesModal').classList.contains('show')`, 6000, '魔改局里弹出规则');
+    await sleep(250);
+    await screenshot(ws, 'v151-3-rules-chaos.png');
+    const rChaos = await evaluate(ws, `window.__pw.rulesView()`);
+    const chaosSec = rChaos.sections.find((s) => s.rules === 'chaos');
+    ok(rChaos.scope === 'chaos', '在魔改局里打开：scope 是魔改', rChaos.scope);
+    ok(rChaos.tag === '魔改版', '标题右边挂上「魔改版」', rChaos.tag);
+    ok(chaosSec && chaosSec.shown, '「魔改版 · 混沌拼布」那一节看得见',
+      chaosSec ? chaosSec.title : '找不到该节');
+    ok(rChaos.variants.filter((v) => v.kind === 'chaos').every((v) => v.shown) &&
+      rChaos.variants.filter((v) => v.kind === 'classic').every((v) => !v.shown),
+      '魔改的数字留着、经典的数字藏起来',
+      rChaos.variants.map((v) => v.kind + ':' + v.shown).join(' '));
+    ok(rChaos.chaosLegend, '魔改局里「混沌格」图例看得见');
+    await evaluate(ws, `document.getElementById('btnRulesClose').click()`);
+    await sleep(150);
 
     /* ================= B：联机部分 ================= */
     const wsb = edgeB.ws;

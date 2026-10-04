@@ -14,10 +14,21 @@
 <!-- ============ 主菜单 ============ -->
 <section id="menu" class="screen active">
   <div class="menu-card">
+
+    <!-- 标题：两个字各做成一枚「布片」，四周一圈虚线针脚；下面一条拼布带，
+         配一颗纽扣和一只砂漏 —— 全是纯 CSS 画的，不引图片也不引字体文件。 -->
     <div class="brand">
-      <h1 class="title" data-text="拼布">拼布</h1>
+      <h1 class="title"><span class="tile t1">拼</span><span class="tile t2">布</span></h1>
       <p class="subtitle">Patchwork · 单机与联机</p>
+      <div class="brand-deco" aria-hidden="true">
+        <span class="deco-btn"></span>
+        <span class="quilt-strip"></span>
+        <span class="deco-hourglass"></span>
+      </div>
     </div>
+
+    <!-- 粗分隔线：把「标题 / 名字 / 玩法 / 底部按钮」四块切开 -->
+    <div class="menu-rule" aria-hidden="true"></div>
 
     <div class="menu-top">
       <label class="field">
@@ -29,6 +40,8 @@
         <span class="sfx-ico" aria-hidden="true">♪</span><span class="sfx-txt">音效开</span>
       </button>
     </div>
+
+    <div class="menu-rule" aria-hidden="true"></div>
 
     <!-- 单机与联机左右并排；每块里经典版在上、魔改版在下，用一条小分隔带隔开 -->
     <div class="menu-grid">
@@ -99,9 +112,11 @@
 
     <p id="menuMsg" class="msg"></p>
 
+    <div class="menu-rule" aria-hidden="true"></div>
+
     <div class="menu-foot">
-      <button id="btnRulesMenu" class="btn tiny">规则与图例</button>
-      <button id="btnChangelog" class="btn tiny">更新日志</button>
+      <button id="btnRulesMenu" class="btn primary">规则与图例</button>
+      <button id="btnChangelog" class="btn">更新日志</button>
     </div>
   </div>
 </section>
@@ -211,33 +226,24 @@
   </div>
 </div>
 
-<!-- ============ 规则与图例 ============ -->
+<!-- ============ 规则与图例 ============
+     同一个弹层，主菜单和游戏里共用。区别只在「看多少」：
+       · 从主菜单打开 → 经典 + 魔改 全看（经典排在前，魔改单独一节压在最后）
+       · 从对局里打开 → 只显示当前这一局用的那套
+     实现方式：JS 给 #rulesModal 挂 data-scope（both / classic / chaos），
+     变体差异用 <span class="rv rv-classic|rv-chaos" data-tag="…"> 包起来，
+     CSS 按 data-scope 决定显示哪些、以及在 both 模式下补上「经典／魔改」小标签。 -->
 <div id="rulesModal" class="overlay">
   <div class="overlay-card wide">
-    <h2>规则与图例</h2>
+    <h2>规则与图例<span id="rulesScopeTag" class="scope-tag" hidden></span></h2>
     <div class="ov-body rules-body">
 
       <div class="rules-sec">
         <h3>目标</h3>
         <p>把补丁缝到自己的 9×9 拼布板上，尽量填满、尽量多剩纽扣。</p>
-        <p class="formula">最终得分 ＝ 剩余纽扣 ＋ 7×7 奖励 － 空格数 × 2</p>
+        <p class="formula rv rv-classic" data-tag="经典版"><span class="vtag">经典版</span>最终得分 ＝ 剩余纽扣 ＋ 7×7 奖励（+7） － 空格数 × 2</p>
+        <p class="formula rv rv-chaos" data-tag="魔改版"><span class="vtag">魔改版</span>最终得分 ＝ 剩余纽扣 ＋ 7×7 奖励（+14） － 空格数 × 3</p>
         <p>负分是正常的。得分最高者获胜；<b>同分时，先抵达终点的人获胜</b>。</p>
-        <p class="note"><b>魔改版</b>把这条公式改成了 <b>＋14 奖励 － 空格数 × 3</b>，其余部分一致。</p>
-      </div>
-
-      <div class="rules-sec">
-        <h3>魔改版 · 混沌拼布</h3>
-        <p>主菜单下半部分那个入口。补丁的形状和数值一个没改，改的是<b>规则参数</b>和<b>时间板上多出来的一件事</b>，玩起来完全是另一种节奏：</p>
-        <div class="legend legend-card">
-          <div class="lg-row"><span class="lg-num">0 纽扣</span><span>开局手上一个纽扣都没有，第一手只能先跳过挣点本钱</span></div>
-          <div class="lg-row"><span class="lg-num">4 选 1</span><span>中立棋子前方能看到 <b>4 块</b>补丁，可选面更宽</span></div>
-          <div class="lg-row"><span class="lg-num">26 块</span><span>每局只从 33 块里随机抽 26 块进环，环更短、转得更快，几局之间长得都不一样</span></div>
-          <div class="lg-row"><span class="lg-num">+14</span><span>7×7 奖励翻倍</span></div>
-          <div class="lg-row"><span class="lg-num">×3</span><span>每空一格罚 3 分，摆烂的代价更贵</span></div>
-        </div>
-        <p><b>混沌格</b>：时间板上多出 3 个紫色格子（第 <b>12 / 30 / 48</b> 格），经过或停在上面都会随机触发一件事 ——</p>
-        <p class="formula" id="chaosEventHint">天赐 · 苛捐 · 命运交换 · 时间跃迁</p>
-        <p class="note">埋的是什么在开局就抽好了，踩上去才揭晓。<b>苛捐</b>纽扣不够时只扣到 0 为止，永远不会变成负数；<b>时间跃迁</b>额外走的那两格不再触发混沌格，但途中的纽扣格照收。</p>
       </div>
 
       <div class="rules-sec">
@@ -253,7 +259,7 @@
           两人局时，那位就是你的对手。如果你已经领先全场，这一步不前进也不领纽扣。</p>
         <p class="note">如果眼前那几块补丁一块都买不起，右下角的「跳过领纽扣」会<b>放大闪动</b>提醒你 —— 这一步最容易忘。</p>
         <p><b>行动 B · 买补丁</b>（固定 5 步）<br>
-          ① 从中立棋子前方那几块里挑一块（经典 3 块 / 魔改 4 块）→ ② 棋子移到该块的位置（只前移不后退）→ ③ 付掉卡片上标的纽扣 → ④ 放到自己板上任意不重叠、不越界的位置（可旋转 / 镜像）→ ⑤ 时间令牌按卡片上的砂漏数前进。</p>
+          ① 从中立棋子前方那几块里挑一块（<span class="rv rv-classic" data-tag="经典">3 块</span><span class="rv rv-chaos" data-tag="魔改">4 块</span>）→ ② 棋子移到该块的位置（只前移不后退）→ ③ 付掉卡片上标的纽扣 → ④ 放到自己板上任意不重叠、不越界的位置（可旋转 / 镜像）→ ⑤ 时间令牌按卡片上的砂漏数前进。</p>
         <p class="note">补丁一旦放下就不能再移动，也不会被拿回。</p>
       </div>
 
@@ -266,7 +272,7 @@
 
       <div class="rules-sec">
         <h3>7×7 奖励与结束</h3>
-        <p>先在自己板上拼出完整无洞的 <b>7×7</b> 方块，得 <b>+7</b> 分。<b>全场只有一块奖励牌</b>，被第一个拼出的人拿走，之后谁再拼出来也没有加分。</p>
+        <p>先在自己板上拼出完整无洞的 <b>7×7</b> 方块，得 <span class="rv rv-classic" data-tag="经典版"><b>+7</b> 分</span><span class="rv rv-chaos" data-tag="魔改版"><b>+14</b> 分</span>。<b>全场只有一块奖励牌</b>，被第一个拼出的人拿走，之后谁再拼出来也没有加分。</p>
         <p>所有人的令牌都到达第 53 格时对局结束。若某次前进会超出终点，令牌停在 53，只按实际走过的格数领纽扣。</p>
       </div>
 
@@ -278,6 +284,7 @@
           <div class="lg-row"><span class="lg-swatch tb-leather"></span><span><b>皮革格</b>：先到者获得 1×1 补丁</span></div>
           <div class="lg-row"><span class="lg-swatch tb-claimed"></span><span>皮革格已被领走（变暗，后来者拿不到）</span></div>
           <div class="lg-row"><span class="lg-swatch tb-end"></span><span><b>终点格 53</b>：同时也是最后一枚纽扣格</span></div>
+          <div class="lg-row" data-rules="chaos"><span class="lg-swatch tb-chaos"></span><span><b>混沌格</b>：经过时随机触发一件事（只有魔改版才有）</span></div>
           <div class="lg-row"><span class="lg-swatch tok-me"></span><span><b>当前行动方</b>的时间令牌：带金色描边，下一步由他先动</span></div>
           <div class="lg-row"><span class="lg-swatch tok-opp"></span><span>其他玩家的时间令牌，每人一种颜色（人多时同一格会排成小方阵）</span></div>
         </div>
@@ -306,7 +313,7 @@
 
       <div class="rules-sec">
         <h3>补丁环 · 两种环绕方式</h3>
-        <p>33 块补丁沿外圈摆放，<b>每局重新洗牌，位置都不一样</b>；魔改版则是从 33 块里抽 26 块。金色的<b>中立棋子</b>永远停在正前方那格的逆时针一侧，它顺时针方向前面那几块（经典 3 块 / 魔改 4 块）就是你现在能买的。</p>
+        <p><span class="rv rv-classic" data-tag="经典"><b>33 块补丁</b></span><span class="rv rv-chaos" data-tag="魔改">从 33 块里<b>随机抽 26 块</b></span>沿外圈摆放，<b>每局重新洗牌，位置都不一样</b>。金色的<b>中立棋子</b>永远停在正前方那格的逆时针一侧，它顺时针方向前面那几块（<span class="rv rv-classic" data-tag="经典">3 块</span><span class="rv rv-chaos" data-tag="魔改">4 块</span>）就是你现在能买的。</p>
         <p>买走一块，棋子就前移一格、整圈跟着转（<b>只前移不后退</b>）。</p>
         <p><b>① 绕拼布板（双人局默认）</b>：环从圆变成贴着两块拼布板的<b>圆角矩形</b>，补丁沿着四条边等距摊开、<b>全部正着放、一样大小</b>，格子比圆环上大一档，所以每一块都看得清清楚楚。中立棋子停在<b>上方那条轨道</b>上，紧挨着第一块可选补丁。</p>
         <p><b>② 环绕时间板</b>：环是个圆，圆心就是时间板本身（9 列 × 6 行，正好 54 格），像实物那样「环在外、盘在内」。环上越靠后的补丁画得越小，那只是远近的视觉提示。</p>
@@ -319,6 +326,22 @@
         <p>点环下方那几张卡片选补丁，<b>或者直接点环上／框上带金色描边的那几块</b> → 鼠标在<b>自己（或当前行动方）的拼布板</b>上移动，落点实时预览（绿＝可放，红＝不可），<b>补丁会盖住鼠标停的那一格</b> → <b>左键点一下</b>固定位置（固定后预览不再跟手，可以放心去点按钮）→ 点右下角<b>确认放置</b>。</p>
         <p>联机时，你的鼠标一动，对手那边的拼布板上就会出现一块半透明预览，他看得见你在琢磨什么；反过来也一样。</p>
         <p class="note">右键或 <kbd>Esc</kbd>：解除固定 ／ <kbd>R</kbd> 旋转 ／ <kbd>F</kbd> 镜像 ／ <kbd>空格</kbd> 跳过领纽扣 ／ <kbd>Enter</kbd> 确认放置</p>
+      </div>
+
+      <!-- 只有魔改版才显示的一节。刻意排在全部经典规则之后。 -->
+      <div class="rules-sec chaos-sec" data-rules="chaos">
+        <h3>魔改版 · 混沌拼布</h3>
+        <p>就是主菜单里带紫色「<b>魔改版</b>」标签的那几个入口。补丁的形状和数值一个没改，改的是<b>规则参数</b>和<b>时间板上多出来的一件事</b>，玩起来完全是另一种节奏：</p>
+        <div class="legend legend-card">
+          <div class="lg-row"><span class="lg-num">0 纽扣</span><span>开局手上一个纽扣都没有，第一手只能先跳过挣点本钱</span></div>
+          <div class="lg-row"><span class="lg-num">4 选 1</span><span>中立棋子前方能看到 <b>4 块</b>补丁，可选面更宽</span></div>
+          <div class="lg-row"><span class="lg-num">26 块</span><span>每局只从 33 块里随机抽 26 块进环，环更短、转得更快，几局之间长得都不一样</span></div>
+          <div class="lg-row"><span class="lg-num">+14</span><span>7×7 奖励翻倍</span></div>
+          <div class="lg-row"><span class="lg-num">×3</span><span>每空一格罚 3 分，摆烂的代价更贵</span></div>
+        </div>
+        <p><b>混沌格</b>：时间板上多出 3 个紫色格子（第 <b>12 / 30 / 48</b> 格），经过或停在上面都会随机触发一件事 ——</p>
+        <p class="formula" id="chaosEventHint">天赐 · 苛捐 · 命运交换 · 时间跃迁</p>
+        <p class="note">埋的是什么在开局就抽好了，踩上去才揭晓。<b>苛捐</b>纽扣不够时只扣到 0 为止，永远不会变成负数；<b>时间跃迁</b>额外走的那两格不再触发混沌格，但途中的纽扣格照收。</p>
       </div>
 
     </div>

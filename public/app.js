@@ -1647,8 +1647,18 @@ function escapeHtml(s) {
 /* ---------------- 更新日志 ---------------- */
 const CHANGELOG = [
   {
-    v: 'v1.5',
+    v: 'v1.5.1',
     date: '当前',
+    items: [
+      '<b>规则按版本分开显示</b>：从<b>主菜单</b>点「规则与图例」，看到的是完整的 —— <b>经典规则全部排在前</b>，魔改版单独一节压在最后。进对局后再点「规则」，就<b>只显示这一局用的那一套</b>：经典局看不到混沌格那节，魔改局才看得到，标题右边还会挂一枚「魔改版」小标签。',
+      '两套规则不一致的地方（得分公式、7×7 奖励、前方能看到几块、环上多少块补丁）现在会<b>跟着版本自动换</b>，不再是一句「魔改版把这条改成了…」的补充说明。两套一起看时，每处差异前面会标上它属于哪一版。',
+      '<b>主菜单标题做成拼布</b>：「拼」「布」两个字各坐一枚布片，斜纹布底 + 一圈虚线缝脚，两块微微错开角度像是缝在一起的；底下一条五色拼布带，配一颗带线孔的纽扣和一只砂漏。仍然是纯 CSS，没有任何图片或字体文件。',
+      '<b>主菜单分区用粗线隔开</b>：标题、名字、玩法、底部按钮四块之间各压一条带金色缝脚的粗线，单机与联机两栏中间那条竖线也加粗了；「规则与图例」按钮挪到底部正中间并放大，不再是个不起眼的小按钮。',
+    ],
+  },
+  {
+    v: 'v1.5',
+    date: '上一版',
     items: [
       '<b>魔改版 · 混沌拼布</b>（主菜单新增入口，单机与联机都有）：规则被整套换掉 —— <b>0 纽扣起步</b>、前方 <b>4 选 1</b>、补丁池每局只抽 <b>26 块</b>、7×7 奖励翻倍成 <b>+14</b>、每空一格罚 <b>3 分</b>。时间板上还多埋了 <b>3 个混沌格</b>（12 / 30 / 48 格），踩到就随机发牌：<b>天赐</b>白拿 6 纽扣、<b>苛捐</b>扣 4 纽扣、<b>命运交换</b>跟纽扣最多的对手对调口袋、<b>时间跃迁</b>额外冲两格。',
       '<b>音效</b>：买补丁、跳过、收纽扣、轮到你、混沌格、终局胜负…… 都有声了。全部是现场合成的，没有引入任何音频文件，双击 bat 就能玩这一点没变。主菜单右上角和对局页顶栏各有一个开关，<b>每个界面都能开关</b>，改一处两处一起变，选择记在本地下次还生效。',
@@ -1866,8 +1876,37 @@ $('btnRematch').onclick = () => {
 
 $('btnClose').onclick = () => $('overlay').classList.remove('show');
 
-$('btnRulesMenu').onclick = () => $('rulesModal').classList.add('show');
-$('btnRules').onclick = () => $('rulesModal').classList.add('show');
+/**
+ * 规则与图例。
+ *
+ * 主菜单和对局页共用这一个弹层，区别只在「看多少」：
+ *   · 从主菜单打开 → both：经典规则在前、魔改版整节压在最后，两套都看
+ *   · 从对局里打开 → 只看当前这一局用的那套（classic / chaos）
+ * 具体哪些段落、哪些数字该显示，交给 CSS 按 #rulesModal 的 data-scope 处理，
+ * 这里只负责把 scope 和标题右边那枚小标签摆好。
+ */
+function openRules(scope) {
+  const modal = $('rulesModal');
+  const use = scope === 'chaos' ? 'chaos' : (scope === 'classic' ? 'classic' : 'both');
+  modal.dataset.scope = use;
+
+  const tag = $('rulesScopeTag');
+  if (tag) {
+    if (use === 'both') {
+      tag.hidden = true;
+      tag.textContent = '';
+    } else {
+      const meta = S.meta && S.meta.variants && S.meta.variants[use];
+      tag.textContent = (meta && meta.label) || (use === 'chaos' ? '魔改版' : '经典版');
+      tag.className = 'scope-tag ' + use;
+      tag.hidden = false;
+    }
+  }
+  modal.classList.add('show');
+}
+
+$('btnRulesMenu').onclick = () => { SFX.play('click'); openRules('both'); };
+$('btnRules').onclick = () => { SFX.play('click'); openRules(S.variant); };
 $('btnRulesClose').onclick = () => $('rulesModal').classList.remove('show');
 $('btnChangelog').onclick = () => $('changelogModal').classList.add('show');
 $('btnChangelogClose').onclick = () => $('changelogModal').classList.remove('show');
@@ -1910,6 +1949,33 @@ window.__pw = {
   get sfxOn() { return SFX.on; },
   /** 当前生效的规则数值（经典/魔改），等待房时是 null */
   get rules() { return (S.state && S.state.rules) || null; },
+  /** 规则弹层当前的显示范围：'both' | 'classic' | 'chaos' */
+  get rulesScope() { return $('rulesModal').dataset.scope || ''; },
+  /** 规则弹层的只读体检：哪几节在显示、哪几处变体差异是显示着的 */
+  rulesView() {
+    const modal = $('rulesModal');
+    const shown = (el) => Boolean(el && el.offsetParent !== null);
+    const body = modal.querySelector('.rules-body');
+    return {
+      scope: modal.dataset.scope || '',
+      open: modal.classList.contains('show'),
+      tag: (() => {
+        const t = $('rulesScopeTag');
+        return t && !t.hidden ? t.textContent : '';
+      })(),
+      sections: Array.from(body.querySelectorAll('.rules-sec')).map((s) => ({
+        title: (s.querySelector('h3') || {}).textContent || '',
+        rules: s.dataset.rules || 'both',
+        shown: shown(s),
+      })),
+      variants: Array.from(body.querySelectorAll('.rv')).map((s) => ({
+        kind: s.classList.contains('rv-chaos') ? 'chaos' : 'classic',
+        shown: shown(s),
+      })),
+      // 魔改版专属的图例行（混沌格）
+      chaosLegend: shown(body.querySelector('.tb-chaos')),
+    };
+  },
   /** 中立棋子的实时位置（相对舞台中心），测「它到底在不在上方」用 */
   neutralPos() {
     const tok = $('ringNeutral');

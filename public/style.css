@@ -50,49 +50,147 @@ html, body {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 16px;
-  padding: 30px 26px 22px;
+  padding: 24px 26px 18px;
   box-shadow: 0 24px 60px rgba(0, 0, 0, .55);
 }
 
-/* ---------------- 主菜单：标题的「艺术字」----------------
-   纯 CSS，不用图片也不引字体文件：渐变填色 + 背景裁剪到文字 +
-   一层极淡的描边 + 双层投影（一层贴边压暗、一层向外发金光）。
-   这样在任何机器上渲染结果一致，也不会多出一个下载失败的文件。 */
+/* ---------------- 主菜单：把「拼布」这两个字本身做成拼布 ----------------
+   每个字坐一枚布片：斜纹布底 + 四周一圈虚线缝脚 + 投影，两块微微错开角度，
+   像真的缝在一起。下面再配一条拼布带、一颗纽扣、一只砂漏。
+   全部纯 CSS —— 不引图片、不引字体文件，任何机器上渲染结果都一样。 */
 .brand { position: relative; padding-top: 2px; }
-.brand::after {
-  content: '';
-  display: block;
-  width: 148px;
-  height: 1px;
-  margin: 16px auto 0;
-  background: linear-gradient(90deg, transparent, var(--gold-dim), transparent);
-}
+
 .title {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
   margin: 0;
-  font-size: 46px;
-  line-height: 1.12;
-  font-weight: 800;
-  letter-spacing: .2em;
-  /* 字距会在末尾多留一个空档，居中的话整行会往左偏，这里补回来 */
-  text-indent: .2em;
-  text-align: center;
-  background-image: linear-gradient(178deg, #fff6dd 0%, #f0c879 32%, #b7832c 62%, #ffe7b0 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  -webkit-text-stroke: 1px rgba(255, 244, 214, .3);
-  filter: drop-shadow(0 1px 0 rgba(0, 0, 0, .8)) drop-shadow(0 6px 16px rgba(232, 181, 99, .3));
 }
-/* 不支持 background-clip:text 的老浏览器：至少保证是金色实心字，别变成空白 */
-@supports not ((-webkit-background-clip: text) or (background-clip: text)) {
-  .title { color: var(--gold); background: none; }
+.tile {
+  position: relative;
+  flex: none;
+  width: 66px;
+  height: 66px;
+  display: grid;
+  place-items: center;
+  font-size: 42px;
+  font-weight: 800;
+  line-height: 1;
+  color: #fff3d4;
+  border-radius: 11px;
+  text-shadow: 0 2px 3px rgba(0, 0, 0, .6);
+  box-shadow:
+    0 8px 18px rgba(0, 0, 0, .5),
+    inset 0 1px 0 rgba(255, 255, 255, .18),
+    inset 0 -3px 8px rgba(0, 0, 0, .35);
+}
+/* 布片四周那圈虚线针脚 */
+.tile::before {
+  content: '';
+  position: absolute;
+  inset: 6px;
+  border: 2px dashed rgba(255, 245, 220, .42);
+  border-radius: 7px;
+  pointer-events: none;
+}
+.t1 {
+  background:
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, .075) 0 4px, transparent 4px 8px),
+    linear-gradient(150deg, #d8a24a, #a4641f 72%);
+  transform: rotate(-2.5deg);
+}
+.t2 {
+  background:
+    repeating-linear-gradient(-45deg, rgba(255, 255, 255, .075) 0 4px, transparent 4px 8px),
+    linear-gradient(150deg, #b57ad8, #6a4a9e 72%);
+  transform: rotate(2deg);
+}
+
+/* 标题下面那排小装饰：纽扣 — 拼布带 — 砂漏 */
+.brand-deco {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 304px;
+  max-width: 100%;
+  margin: 12px auto 0;
+}
+/* 一条拼布带：几块不同花色的布拼成一行，上下各缝一道虚线 */
+.quilt-strip {
+  flex: 1;
+  height: 14px;
+  border-radius: 3px;
+  border-top: 1px dashed rgba(255, 245, 220, .3);
+  border-bottom: 1px dashed rgba(255, 245, 220, .3);
+  background: repeating-linear-gradient(90deg,
+    #d8a24a 0 18px, #8f6fd0 18px 36px, #5fbf8f 36px 54px,
+    #5c9dd6 54px 72px, #e06b6b 72px 90px);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .28);
+  opacity: .88;
+}
+/* 一颗纽扣：金属底 + 四个线孔 */
+.deco-btn {
+  position: relative;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 28%, #ffedb8, #d8a13a 58%, #7d5416);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, .5), inset 0 -2px 4px rgba(0, 0, 0, .3);
+}
+.deco-btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background-image:
+    radial-gradient(circle at 7px 7px, rgba(0, 0, 0, .62) 1.2px, transparent 1.7px),
+    radial-gradient(circle at 13px 7px, rgba(0, 0, 0, .62) 1.2px, transparent 1.7px),
+    radial-gradient(circle at 7px 13px, rgba(0, 0, 0, .62) 1.2px, transparent 1.7px),
+    radial-gradient(circle at 13px 13px, rgba(0, 0, 0, .62) 1.2px, transparent 1.7px);
+}
+/* 一只砂漏：两个尖对尖的三角，跟补丁卡上那个时间图标同款 */
+.deco-hourglass {
+  position: relative;
+  flex: none;
+  width: 18px;
+  height: 20px;
+}
+.deco-hourglass::before,
+.deco-hourglass::after {
+  content: '';
+  position: absolute;
+  left: 1px;
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+}
+.deco-hourglass::before { top: 0; border-top: 10px solid var(--gold); }
+.deco-hourglass::after { bottom: 0; border-bottom: 10px solid var(--gold); }
+
+/* 主菜单里把大区块切开的粗线：一条实心带压着一排金色缝脚 */
+.menu-rule {
+  position: relative;
+  height: 3px;
+  margin: 11px 0;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--line) 5%, var(--line) 95%, transparent);
+}
+.menu-rule::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 2px;
+  background-image: repeating-linear-gradient(90deg,
+    rgba(232, 181, 99, .5) 0 6px, transparent 6px 13px);
 }
 
 .menu-top {
   display: flex;
   align-items: flex-end;
   gap: 12px;
-  margin-bottom: 18px;
+  margin-bottom: 0;
 }
 .menu-top .field { flex: 1; min-width: 0; margin-bottom: 0; }
 
@@ -139,7 +237,8 @@ html, body {
 }
 .menu-grid .menu-sec { margin-top: 0; padding-top: 0; border-top: none; }
 .menu-grid .menu-sec + .menu-sec {
-  border-left: 1px solid var(--line-soft);
+  /* 两栏之间的分隔也用粗线，跟横向的 .menu-rule 呼应 */
+  border-left: 2px solid var(--line);
   padding-left: 22px;
 }
 
@@ -261,11 +360,11 @@ select option { background: var(--panel); color: var(--text); }
 .menu-foot {
   display: flex;
   justify-content: center;
-  gap: 10px;
-  margin-top: 18px;
-  padding-top: 16px;
-  border-top: 1px solid var(--line-soft);
+  gap: 12px;
+  margin-top: 0;
 }
+/* 底部这两个按钮刻意做得比 .tiny 大 —— 「规则与图例」得一眼能看见 */
+.menu-foot .btn { min-width: 132px; padding: 9px 18px; font-size: 13.5px; }
 
 /* 主菜单里那条「让朋友打开这个地址」—— 以前只印在 PowerShell 里 */
 .net-hint {
@@ -296,7 +395,7 @@ select option { background: var(--panel); color: var(--text); }
 /* 标题的样式在上面的「主菜单：标题的艺术字」一节里，这里不再重复定义 */
 
 .subtitle {
-  margin: 8px 0 20px;
+  margin: 11px 0 0;
   text-align: center;
   color: var(--text-faint);
   letter-spacing: .16em;
@@ -1240,6 +1339,108 @@ kbd {
   font-size: 13px;
 }
 
+/* ---------------- 规则里的「按变体显示」 ----------------
+   两套规则不一样的数字和句子，用 <span class="rv rv-classic|rv-chaos" data-tag="…">
+   包起来，整节只有魔改版才有的内容直接写 data-rules="chaos"。
+   #rulesModal 上的 data-scope 决定看多少：
+     both    —— 从主菜单打开：两套都显示，经典在前、魔改整节压在最后，
+                并在每处差异前面补一个「经典版／魔改版」小标签
+     classic —— 对局里打开：只留经典的
+     chaos   —— 对局里打开：只留魔改的
+   这样「进游戏后只显示当前这一版」不用拆成两份文案。 */
+/* 行内的变体差异：两套一起看时，前面补一个「经典／魔改」小标签，
+   中间自动加一个「／」分隔符 —— 所以 HTML 里不用手写这两样东西。 */
+.rv { display: inline; }
+.rv:not(.formula) + .rv:not(.formula)::before {
+  content: '／';
+  color: var(--text-faint);
+  margin: 0 3px;
+}
+#rulesModal[data-scope="classic"] .rv-chaos,
+#rulesModal[data-scope="chaos"] .rv-classic { display: none; }
+/* 整节只在某个版本里才有的（比如魔改版的混沌拼布）直接挂 data-rules */
+#rulesModal[data-scope="classic"] [data-rules="chaos"],
+#rulesModal[data-scope="chaos"] [data-rules="classic"] { display: none; }
+
+#rulesModal[data-scope="both"] .rv:not(.formula)::before {
+  content: attr(data-tag);
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  color: #2a1c08;
+  background: linear-gradient(120deg, #f0d191, #c89541);
+  vertical-align: 1px;
+}
+/* 上面那条会把「／」也覆盖掉，这里给后一个重新补回来，并换成紫色 */
+#rulesModal[data-scope="both"] .rv:not(.formula) + .rv:not(.formula)::before {
+  content: '／' attr(data-tag);
+  margin-left: 10px;
+  color: #1a1226;
+  background: linear-gradient(120deg, #d59cf0, #8f6fd0);
+}
+
+/* 整块的差异（比如得分公式）：标签写在 <span class="vtag"> 里，默认不显示，
+   只有「两套一起看」时才露出来，并且单独占一行压在公式上面。 */
+.vtag { display: none; }
+#rulesModal[data-scope="both"] .formula > .vtag {
+  display: block;
+  width: fit-content;
+  margin: 0 0 5px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+#rulesModal[data-scope="both"] .formula.rv-classic > .vtag {
+  color: #2a1c08;
+  background: linear-gradient(120deg, #f0d191, #c89541);
+}
+#rulesModal[data-scope="both"] .formula.rv-chaos > .vtag {
+  color: #1a1226;
+  background: linear-gradient(120deg, #d59cf0, #8f6fd0);
+}
+
+/* 弹层标题右边那枚「这一局是哪一版」的标记 */
+.scope-tag {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  vertical-align: 2px;
+}
+.scope-tag[hidden] { display: none; }
+.scope-tag.classic { color: #2a1c08; background: linear-gradient(120deg, #f0d191, #c89541); }
+.scope-tag.chaos { color: #1a1226; background: linear-gradient(120deg, #d59cf0, #8f6fd0); }
+
+/* 魔改版那一节用一道粗虚线缝住，一眼看出它跟上面是一整套 */
+.rules-body .chaos-sec {
+  margin-top: 26px;
+  padding-top: 6px;
+  border-top: 3px dashed rgba(201, 139, 224, .32);
+}
+.rules-body .chaos-sec h3 { margin-top: 14px; color: #d9bdf0; }
+
+/* 图例里那枚混沌格色块，跟时间板上真正的格子长一个样 */
+.tb-chaos {
+  background: linear-gradient(155deg, #3d2b58, #2a2340);
+  box-shadow: inset 0 0 0 1px rgba(201, 139, 224, .34);
+}
+.tb-chaos::after {
+  content: '';
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #f0d6ff, #8f6fd0 72%);
+}
+
 .legend { display: flex; flex-direction: column; gap: 7px; }
 .legend-card {
   margin-top: 10px;
@@ -1325,10 +1526,19 @@ kbd {
 @media (max-height: 760px) {
   .ring-stage { --ring-d: 288px; --tb-cell: 21px; }
   .ring-front .patch-shape { height: 50px; }
-  /* 矮屏上主菜单可能顶到顶，把两栏稍微收一收 */
-  .menu-card { padding: 22px 22px 18px; }
-  .title { font-size: 38px; }
-  .brand::after { margin-top: 11px; }
+  /* 矮屏上主菜单可能顶到顶，把标题布片和分隔线都收一收 */
+  .menu-card { padding: 18px 20px 14px; }
+  .tile { width: 54px; height: 54px; font-size: 33px; border-radius: 9px; }
+  .tile::before { inset: 5px; border-width: 1.5px; }
+  .brand-deco { margin-top: 9px; }
+  .menu-rule { margin: 8px 0; }
+  .subtitle { margin-top: 8px; }
+  /* 玩法卡片也压一压，否则 700 高的窗口还是会冒出滚动条 */
+  .mode-card { padding: 10px 13px; margin-bottom: 7px; }
+  .mode-card b { font-size: 14px; }
+  .mode-card small { font-size: 11.5px; margin-top: 2px; }
+  .sec-title { margin-bottom: 8px; }
+  .inline-field { margin-bottom: 7px; }
 }
 
 /* 主菜单两栏在窄屏上摞回上下，竖排时把竖分隔线换成横的 */
@@ -1337,12 +1547,13 @@ kbd {
   .menu-grid .menu-sec + .menu-sec {
     border-left: none;
     padding-left: 0;
-    border-top: 1px solid var(--line-soft);
+    border-top: 2px solid var(--line);
     margin-top: 20px;
     padding-top: 18px;
   }
   .menu-top { flex-wrap: wrap; }
   .menu-top .field { flex: 1 1 100%; }
+  .brand-deco { width: 100%; }
 }
 
 @media (max-width: 860px) {
