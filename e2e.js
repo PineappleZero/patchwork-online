@@ -389,6 +389,15 @@ function chooseLeatherSpot(board) {
     await sleep(60);
     g3 = lastState(t1);
   }
+  // 收尾：主循环可能在「刚好有人踩到皮革格」那一刻跑完 30 步就退出，
+  // 留下一条没落下的皮革 —— 皮革必须在继续之前放完，不然下面两条断言会随机红。
+  for (let i = 0; i < 10 && g3.phase !== 'over' && g3.pendingLeather.length > 0; i += 1) {
+    const owner = g3.pendingLeather[0].player;
+    const spot = chooseLeatherSpot(g3.players[owner].board);
+    trio[owner].send({ type: 'leather', row: spot.row, col: spot.col });
+    await sleep(80);
+    g3 = lastState(t1);
+  }
   check('三个座位都轮到过', actedSeats.size === 3, [...actedSeats].join(','));
   check('三人局时间令牌都不越界', g3.players.every((p) => p.time >= 0 && p.time <= 53));
   check('三人局没有皮革积压', g3.phase === 'over' || g3.pendingLeather.length === 0);

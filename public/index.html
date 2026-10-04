@@ -90,20 +90,19 @@
 
     <!-- 补丁环 + 时间板 + 事件纪要 -->
     <div class="center" id="centerCol">
-      <div class="ring-panel">
-        <div class="ring-label" id="ringLabel">补丁环</div>
+      <!-- 补丁环 + 环心里的时间板：合并成一块「棋盘」。
+           环在外圈转，时间板缩在环心当棋盘本身。 -->
+      <div class="ring-panel" id="boardPanel">
+        <div class="ring-label" id="ringLabel">补丁环 · 时间板</div>
         <div class="ring-stage" id="ringStage">
           <div class="ring-guide"></div>
-          <div class="ring-count" id="ringCount"><b>33</b><span>块待选</span></div>
+          <div class="ring-core">
+            <div class="timeboard" id="timeboard"></div>
+          </div>
           <div class="ring-far" id="ringFar"></div>
           <div class="ring-neutral" id="ringNeutral" title="中立指示物">中立</div>
         </div>
         <div class="ring-front" id="ringFront"></div>
-      </div>
-
-      <div class="timeboard-wrap">
-        <div class="tb-label">时间板</div>
-        <div class="timeboard" id="timeboard"></div>
       </div>
 
       <div class="log-wrap">
@@ -234,8 +233,9 @@
       </div>
 
       <div class="rules-sec">
-        <h3>补丁环（中间那圈转盘）</h3>
-        <p>33 块补丁沿环摆放，<b>每局重新洗牌，位置都不一样</b>。金色的<b>中立指示物</b>永远停在正前方，它前面那 3 块就是你现在能买的 —— 也就是环下方放大显示的那三张卡片。</p>
+        <h3>补丁环包住时间板（右边那一整块）</h3>
+        <p>33 块补丁沿外圈摆放，<b>每局重新洗牌，位置都不一样</b>。金色的<b>中立指示物</b>永远停在正前方那格的逆时针一侧，它顺时针方向前面那 3 块就是你现在能买的 —— 也就是环下方放大显示的那三张卡片。</p>
+        <p><b>外圈包围的正中央就是时间板</b>（9 列 × 6 行，正好 54 格），所以环不是单独挂在一边，而是像实物那样「环在外、盘在内」。</p>
         <p>买走一块，指示物就前移一格、整圈跟着转（<b>只前移不后退</b>）。环上越靠后的补丁画得越小，那只是远近的视觉提示。</p>
       </div>
 

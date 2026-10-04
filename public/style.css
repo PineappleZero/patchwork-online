@@ -506,52 +506,53 @@ kbd {
   gap: 8px;
   flex: none;
 }
-.ring-label, .tb-label {
+.ring-label {
   font-size: 11px;
   letter-spacing: .14em;
   color: var(--text-faint);
-  margin-bottom: 9px;
-}
-.ring-label {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 0;
 }
 .ring-rest { letter-spacing: 0; color: #5a6379; font-size: 10.5px; }
 
-/* 环本体。所有小补丁都以这里为坐标系（left/top:50% 就是圆心） */
-.ring-stage { position: relative; width: 100%; height: 194px; flex: none; }
+/* 环本体。所有小补丁都以这里为坐标系（left/top:50% 就是圆心）。
+   --ring-d   轨道直径。app.js 直接从 .ring-guide 的宽度反算半径，窄屏只改这个变量即可。
+   --tb-cell  环心时间板的格子边长。9 列 × 6 行 = 正好 54 格，一格不剩不空。
+   舞台高度要比轨道再多留 40px：12 点钟和 6 点钟那两块补丁是「骑」在圆周上的，
+   只给 2R 的话它们会顶出舞台去压标题和正面卡片。 */
+.ring-stage {
+  --ring-d: 336px;
+  --tb-cell: 25px;
+  position: relative;
+  width: 100%;
+  height: calc(var(--ring-d) + 40px);
+  flex: none;
+}
 
-/* 环的轨道线：半径要和 app.js 里的 RING.radius(84) 对得上 */
+/* 环的轨道线。直径必须罩得住环心那块棋盘的半对角线，
+   否则圆会从时间板的角上切过去。 */
 .ring-guide {
   position: absolute;
   left: 50%; top: 50%;
-  width: 170px; height: 170px;
-  margin: -85px 0 0 -85px;
+  width: var(--ring-d); height: var(--ring-d);
+  transform: translate(-50%, -50%);
   border-radius: 50%;
   border: 1px dashed var(--line);
   background: radial-gradient(circle, rgba(232,181,99,.055), transparent 70%);
 }
 
-/* 环心：还剩多少块 */
-.ring-count {
+/* 环心的棋盘底衬：托住时间板，让它读得出是「一块板」而不是浮在圆里 */
+.ring-core {
   position: absolute;
   left: 50%; top: 50%;
   transform: translate(-50%, -50%);
-  text-align: center;
-  pointer-events: none;
-  color: var(--text-faint);
+  padding: 8px;
+  border-radius: 10px;
+  background: var(--bg-soft);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .05), 0 8px 22px rgba(0, 0, 0, .38);
 }
-.ring-count b {
-  display: block;
-  font-size: 25px;
-  line-height: 1;
-  color: var(--text-dim);
-  font-variant-numeric: tabular-nums;
-}
-.ring-count span { font-size: 10px; letter-spacing: .12em; }
 
 .ring-far { position: absolute; inset: 0; }
 
@@ -657,16 +658,12 @@ kbd {
   font-family: ui-monospace, monospace;
 }
 
-/* 时间板 */
-.timeboard-wrap {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 10px 12px 12px;
-}
+/* 时间板：住在环心里。格子用固定尺寸而不是 1fr，
+   这样 .ring-core 能按内容自适应大小，环的半径才有确定依据。 */
 .timeboard {
   display: grid;
-  grid-template-columns: repeat(14, 1fr);
+  grid-template-columns: repeat(9, var(--tb-cell));
+  grid-auto-rows: var(--tb-cell);
   gap: 2px;
 }
 .tb-cell {
@@ -716,7 +713,9 @@ kbd {
 /* 日志 */
 .log-wrap {
   flex: 1;
-  min-height: 122px;
+  /* 下限别定太高：窗口一矮，中间列会被撑破，日志直接被裁掉。
+     正常窗口下 flex:1 会把它撑得远大于这个值，所以调低不影响观感。 */
+  min-height: 104px;
   position: relative;
   display: flex;
 }
@@ -1026,9 +1025,15 @@ kbd {
 @media (max-width: 1080px) {
   .center { width: 352px; }
   .patch-grid .pc-cell { width: 10px; height: 10px; }
-  .ring-stage { height: 176px; }
-  .ring-guide { width: 148px; height: 148px; margin: -74px 0 0 -74px; }
-  .ring-count b { font-size: 21px; }
+  /* 窄一档：环和时间板一起等比缩，不用同步改 JS（半径是从轨道宽度反算的） */
+  .ring-stage { --ring-d: 288px; --tb-cell: 21px; }
+  .ring-front .patch-shape { height: 50px; }
+}
+
+/* 窗口矮的时候（笔记本 768p 之类）把环再缩一档，
+   否则「环 + 时间板」那块棋盘会把下面的事件纪要整个挤掉。 */
+@media (max-height: 760px) {
+  .ring-stage { --ring-d: 288px; --tb-cell: 21px; }
   .ring-front .patch-shape { height: 50px; }
 }
 

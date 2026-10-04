@@ -1,8 +1,8 @@
 'use strict';
 
 /*
- * v1.3 界面联调：用 CDP 驱动本机 Edge，逐屏截图并断言关键布局。
- * 覆盖：主菜单（含联机网址）/ 人机对战 / 补丁环 / 跳过按钮高亮 / 事件纪要滚动 / 更新日志 / 六人联机。
+ * v1.4 界面联调：用 CDP 驱动本机 Edge，逐屏截图并断言关键布局。
+ * 覆盖：主菜单（含联机网址）/ 人机对战 / 补丁环包住时间板 / 跳过按钮高亮 / 事件纪要滚动 / 更新日志 / 六人联机。
  *
  * 用两个 Edge 实例：A 跑单机部分，B 跑联机部分。
  * 因为「返回主菜单」会整页重载，而 localStorage 里还存着上一局的座位，
@@ -170,28 +170,36 @@ function ok(cond, label, extra) {
     ok(solo.mode === '人机对战', '模式标签正确', solo.mode);
     ok(solo.copyHidden, '单机模式隐藏「复制邀请」');
 
-    console.log('\n[2b] 补丁环（v1.3 的主角）');
+    console.log('\n[2b] 补丁环包住时间板（v1.4 的主角）');
     const ring = await evaluate(ws, `(function(){
       const st = window.__pw.state;
       const stage = document.getElementById('ringStage');
       const guide = stage.querySelector('.ring-guide');
+      const core = stage.querySelector('.ring-core');
+      const tb = document.getElementById('timeboard');
       const chips = Array.from(document.getElementById('ringFar').children);
       const sr = stage.getBoundingClientRect();
       const gr = guide.getBoundingClientRect();
+      const cr = core.getBoundingClientRect();
+      const tr = tb.getBoundingClientRect();
       const box = (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; };
       const chipsBox = chips.map(box);
       const outside = chipsBox.filter((b) => b.x < sr.x - 1 || b.y < sr.y - 1 ||
         b.x + b.w > sr.x + sr.width + 1 || b.y + b.h > sr.y + sr.height + 1).length;
-      // 每个小补丁到环心的距离，应该都贴着圆周
       const radii = chipsBox.map((b) => {
         const dx = (b.x + b.w / 2) - (gr.x + gr.width / 2);
         const dy = (b.y + b.h / 2) - (gr.y + gr.height / 2);
         return Math.round(Math.hypot(dx, dy));
       });
+      const R = gr.width / 2;
+      const cx = gr.x + R;
+      const cy = gr.y + R;
+      // 环心里那块棋盘的四角离圆心多远：必须明显小于轨道半径，圆才算真「包住」它
+      const corner = Math.hypot(cr.width / 2, cr.height / 2);
+      const rows = new Set(Array.from(tb.children).map((c) => Math.round(c.getBoundingClientRect().y)));
       const front = Array.from(document.getElementById('ringFront').children);
       return {
         N: st.circle.length,
-        neutral: st.neutral,
         visible: st.visible,
         chips: chips.length,
         chipIds: chips.map((c) => c.dataset.patchId),
@@ -201,7 +209,18 @@ function ok(cond, label, extra) {
         stage: { w: Math.round(sr.width), h: Math.round(sr.height) },
         outside,
         minR: Math.min(...radii), maxR: Math.max(...radii),
-        count: (document.getElementById('ringCount') || {}).textContent || '',
+        corner: Math.round(corner),
+        gapRingToCorner: Math.round(R - corner),
+        tbCells: tb.children.length,
+        tbCols: getComputedStyle(tb).gridTemplateColumns.split(' ').length,
+        tbRows: rows.size,
+        tbInsideCore: tr.x >= cr.x - 1 && tr.y >= cr.y - 1 &&
+          tr.x + tr.width <= cr.x + cr.width + 1 && tr.y + tr.height <= cr.y + cr.height + 1,
+        // 时间板的四个角都得落在轨道圆里面，否则圆会从棋盘角上切过去
+        tbCornersInsideRing: [[tr.x, tr.y], [tr.x + tr.width, tr.y],
+          [tr.x, tr.y + tr.height], [tr.x + tr.width, tr.y + tr.height]]
+          .every((p) => Math.hypot(p[0] - cx, p[1] - cy) < R),
+        label: document.getElementById('ringLabel').textContent,
         neutralShown: !document.getElementById('ringNeutral').hidden,
         neutralInStage: (function(){
           const n = document.getElementById('ringNeutral').getBoundingClientRect();
@@ -218,11 +237,20 @@ function ok(cond, label, extra) {
       '环上 + 正面合起来正好是全部剩余补丁，不重不漏');
     ok(!ring.chipIds.includes('A') || ring.N > 3, '2×1 那块不再霸占正面（原版规则）');
     ok(ring.frontHasGrid, '正面三张卡片都带着补丁形状和三个数字');
-    ok(ring.guideD >= 140 && ring.guideD <= 200, '环的轨道直径在合理区间', ring.guideD + 'px');
+    ok(ring.guideD >= 300 && ring.guideD <= 380, '环的轨道直径在合理区间', ring.guideD + 'px');
     ok(ring.outside === 0, '没有小补丁溢出环的舞台', '溢出 ' + ring.outside + ' 个');
-    ok(ring.maxR - ring.minR <= 2 && ring.maxR > 60,
+    ok(ring.maxR - ring.minR <= 2 && ring.maxR > 120,
       '每个小补丁都贴在圆周上', `半径 ${ring.minR}~${ring.maxR}`);
-    ok(ring.count.indexOf(String(ring.N)) >= 0, '环心写着还剩几块', JSON.stringify(ring.count));
+    ok(ring.tbCols === 9 && ring.tbRows === 6 && ring.tbCells === 54,
+      '时间板改成 9 列 × 6 行，正好 54 格不剩不空',
+      `${ring.tbCols} 列 × ${ring.tbRows} 行，${ring.tbCells} 格`);
+    ok(ring.tbInsideCore, '时间板落在环心的棋盘底衬里');
+    ok(ring.tbCornersInsideRing, '时间板四角都没越过轨道');
+    ok(ring.gapRingToCorner >= 6,
+      '轨道半径大于棋盘半对角线，环真「包住」了时间板',
+      `半径余量 ${ring.gapRingToCorner}px（棋盘角 ${ring.corner}px）`);
+    ok(ring.label.indexOf('时间板') >= 0 && ring.label.indexOf(String(ring.N)) >= 0,
+      '标题同时写着时间板和环上剩余块数', ring.label);
     ok(ring.neutralShown && ring.neutralInStage, '中立指示物画在环上且没被裁掉');
     ok(ring.overflow <= 0, '中间列没有被撑出滚动条', 'overflow=' + ring.overflow);
     await screenshot(ws, 'v14-1-ring.png');
@@ -326,8 +354,8 @@ function ok(cond, label, extra) {
     })()`);
     ok(cl.show, '更新日志弹层能打开');
     ok(cl.vers >= 3, '包含 3 个及以上版本', '实际 ' + cl.vers);
-    ok(cl.first.indexOf('v1.3') === 0, '首条是 v1.3', cl.first);
-    ok(cl.items >= 5, 'v1.3 条目不少于 5 条', '实际 ' + cl.items);
+    ok(cl.first.indexOf('v1.4') === 0, '首条是 v1.4', cl.first);
+    ok(cl.items >= 5, 'v1.4 条目不少于 5 条', '实际 ' + cl.items);
     await screenshot(ws, 'v14-2-changelog.png');
 
     /* ================= B：联机部分 ================= */
@@ -404,10 +432,14 @@ function ok(cond, label, extra) {
     ok(!six.cardsOverflow, '六块拼布板一屏看得全，不用滚动',
       `scrollHeight ${six.wrapScroll} vs clientHeight ${six.wrapClient}`);
 
-    // 六人时中间列最窄，环也得完整待着
+    // 六人时中间列最窄，环和时间板也得完整待着
     const sixRing = await evaluate(wsb, `(function(){
       const stage = document.getElementById('ringStage');
       const sr = stage.getBoundingClientRect();
+      const guide = stage.querySelector('.ring-guide');
+      const gr = guide.getBoundingClientRect();
+      const core = stage.querySelector('.ring-core').getBoundingClientRect();
+      const tb = document.getElementById('timeboard').getBoundingClientRect();
       const chips = Array.from(document.getElementById('ringFar').children);
       let outside = 0;
       chips.forEach((c) => {
@@ -416,16 +448,23 @@ function ok(cond, label, extra) {
       });
       const col = document.getElementById('centerCol');
       const front = document.getElementById('ringFront').getBoundingClientRect();
+      const R = gr.width / 2;
       return {
         chips: chips.length,
         outside,
         overflow: col.scrollHeight - col.clientHeight,
         frontH: Math.round(front.height),
         ringW: Math.round(stage.getBoundingClientRect().width),
+        gapRingToCorner: Math.round(R - Math.hypot(core.width / 2, core.height / 2)),
+        tbInsideRing: [[tb.x, tb.y], [tb.x + tb.width, tb.y],
+          [tb.x, tb.y + tb.height], [tb.x + tb.width, tb.y + tb.height]]
+          .every((p) => Math.hypot(p[0] - (gr.x + R), p[1] - (gr.y + R)) < R),
       };
     })()`);
     ok(sixRing.chips > 0 && sixRing.outside === 0,
       '六人布局下补丁环没有被挤爆', `chips=${sixRing.chips} 溢出=${sixRing.outside}`);
+    ok(sixRing.tbInsideRing && sixRing.gapRingToCorner >= 6,
+      '六人时时间板还稳稳待在环心里', `半径余量 ${sixRing.gapRingToCorner}px`);
     ok(sixRing.overflow <= 0, '六人时中间列也不出滚动条', 'overflow=' + sixRing.overflow);
     ok(!six.pageScrolls, '整页没有出现滚动条（布局没撑破）');
 
