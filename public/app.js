@@ -41,6 +41,7 @@ const S = {
   leatherMode: false,    // 是否处于选择皮革补丁落点的状态
   leatherAt: null,
   votedRematch: false,   // 本局是否已经投过「再来一局」
+  cursors: {},           // 其他座位正在考虑放置的补丁（联机时的实时预览）
   logEvents: [],
   lastEventKey: null,
 };
@@ -118,6 +119,7 @@ function handleServerMessage(msg) {
     S.hover = null;
     S.votedRematch = false;
     S.lastEventKey = null;
+    S.cursors = {};
     try { localStorage.setItem('pwSeat', JSON.stringify({ room: msg.room, token: msg.token })); } catch (e) { /* 忽略 */ }
     $('log').innerHTML = '';
     $('roomTag').textContent = '房间 ' + msg.room;
@@ -132,6 +134,19 @@ function handleServerMessage(msg) {
   }
   if (msg.type === 'chat') {
     pushLog(`<span class="hl">${escapeHtml(msg.name)}</span>：${escapeHtml(msg.text)}`);
+    return;
+  }
+  // 别人的实时预览：只重画他那块拼布板，不整屏刷
+  if (msg.type === 'cursor') {
+    if (!S.state) return;
+    if (msg.patchId === null) delete S.cursors[msg.seat];
+    else {
+      S.cursors[msg.seat] = {
+        patchId: msg.patchId, oriIndex: msg.oriIndex, row: msg.row, col: msg.col,
+      };
+    }
+    renderCursorSeat(msg.seat);
+    renderTurnTag();
     return;
   }
   if (msg.type === 'state') {
@@ -151,10 +166,16 @@ function handleServerMessage(msg) {
       S.locked = null;
       S.hover = null;
       S.votedRematch = false;
+      S.cursors = {};
       $('log').innerHTML = '';
       S.lastEventKey = null;
       setLogJump(false);
     }
+
+    // 局面一动，还在别人屏幕上飘着的旧预览就该过期了 —— 只留当前行动方那一份
+    Object.keys(S.cursors).forEach((k) => {
+      if (Number(k) !== msg.active) delete S.cursors[k];
+    });
 
     // 局面推进了，之前那句「这里放不下」就过期了，别留着误导
     clearHint();
@@ -206,40 +227,57 @@ function logEvents(prev, cur) {
 function render() {
   const st = S.state;
   if (!st) return;
-  const me = st.players[actSeat()];
 
   $('modeTag').textContent = modeLabel(st);
   $('boardWrap').dataset.n = String(st.players.length);
   $('btnCopy').style.display = st.mode === 'online' ? '' : 'none';
 
-  const turn = $('turnTag');
-  if (st.phase === 'waiting') {
-    turn.textContent = '等待开局…';
-    turn.className = 'turn-tag wait';
-  } else if (st.phase === 'over') {
-    turn.textContent = '对局结束';
-    turn.className = 'turn-tag';
-  } else if (canAct()) {
-    const mine = st.local && st.players.length > 1
-      ? `${nameOf(actSeat())} 行动`
-      : '轮到你行动';
-    turn.textContent = mine;
-    turn.className = 'turn-tag mine';
-  } else {
-    turn.textContent = `等待 ${nameOf(st.active)} …`;
-    turn.className = 'turn-tag wait';
-  }
+  renderTurnTag();
 
   // 皮革补丁必须由拿到它的人先放下去
   S.leatherMode = st.pendingLeather.some((x) => x.player === actSeat());
   if (S.leatherMode && !S.leatherAt) S.selected = null;
 
   renderPlayers();
-  renderMarket();
+  renderRing();
   renderTimeboard();
   renderActionbar();
   renderWait();
   renderResult();
+
+  // 自己正在挑补丁时，顺手把「我打算放哪」发给同房的人看
+  sendCursor();
+}
+
+/** 顶部那句「轮到谁 / 谁在放什么」，单独拎出来是因为实时预览也要刷新它 */
+function renderTurnTag() {
+  const st = S.state;
+  if (!st) return;
+  const turn = $('turnTag');
+  if (st.phase === 'waiting') {
+    turn.textContent = '等待开局…';
+    turn.className = 'turn-tag wait';
+    return;
+  }
+  if (st.phase === 'over') {
+    turn.textContent = '对局结束';
+    turn.className = 'turn-tag';
+    return;
+  }
+  if (canAct()) {
+    const mine = st.local && st.players.length > 1
+      ? `${nameOf(actSeat())} 行动`
+      : '轮到你行动';
+    turn.textContent = mine;
+    turn.className = 'turn-tag mine';
+    return;
+  }
+  // 对手正在挑补丁 / 挪位置，就把他琢磨的这块报出来
+  const cur = S.cursors && S.cursors[st.active];
+  turn.textContent = cur && cur.patchId
+    ? `${nameOf(st.active)} 正在放 ${String(cur.patchId).toUpperCase()} …`
+    : `等待 ${nameOf(st.active)} …`;
+  turn.className = 'turn-tag wait';
 }
 
 function modeLabel(st) {
@@ -336,40 +374,176 @@ function renderPlayers() {
   });
 }
 
-function renderMarket() {
-  const st = S.state;
-  const row = $('marketRow');
-  row.innerHTML = '';
-  const me = st.players[actSeat()];
+/* ---------------- 补丁环 ----------------
+ * 原版桌面上那圈补丁：33 块沿环随机摆放，中立指示物停在「正前方」，
+ * 它前面那 3 块就是这一轮能买的。买走一块，指示物前移一格，整圈跟着转。
+ * 这里用「剩下的块数 N」把 360° 均分，正面永远落在 6 点钟方向。
+ */
+const RING = {
+  radius: 84,   // 环半径（px），要和 CSS 里 .ring-guide 的尺寸保持一致
+  tile: 5,      // 环上小补丁的格子边长
+  gap: 1,       // 格子间隙
+  minTile: 2.2, // 格子最小可视边长：块数多的时候别把远处的补丁缩成一个点
+};
 
-  const label = $('marketLabel');
-  if (label) {
-    label.textContent = '补丁市场';
-    const rest = document.createElement('span');
-    rest.className = 'market-rest';
-    rest.textContent = `中立指示物前方 3 块 · 环上还剩 ${st.circle.length} 块`;
-    label.appendChild(rest);
+let _ringBaseMax = 0;
+/** 所有补丁里最宽的那一块，在 scale=1 时占多少 px —— 用来估算环上放不放得下 */
+function ringBaseMax() {
+  if (_ringBaseMax) return _ringBaseMax;
+  S.meta.patches.forEach((p) => {
+    const o = p.orientations[0];
+    const w = o.cols * RING.tile + (o.cols - 1) * RING.gap;
+    const h = o.rows * RING.tile + (o.rows - 1) * RING.gap;
+    _ringBaseMax = Math.max(_ringBaseMax, w, h);
+  });
+  return _ringBaseMax || 29;
+}
+
+/** 环上的一枚小补丁（只是个图形，点击交给正面的大卡片） */
+function makeRingChip(patch) {
+  const chip = document.createElement('div');
+  chip.className = 'ring-chip';
+  chip.dataset.patchId = patch.id;
+  const o = patch.orientations[0];
+  const grid = document.createElement('div');
+  grid.className = 'rc-grid';
+  grid.style.gridTemplateColumns = `repeat(${o.cols}, ${RING.tile}px)`;
+  grid.style.gridAutoRows = `${RING.tile}px`;
+  grid.style.gap = `${RING.gap}px`;
+  for (let r = 0; r < o.rows; r += 1) {
+    for (let c = 0; c < o.cols; c += 1) {
+      const cell = document.createElement('i');
+      const on = o.cells.some(([cr, cc]) => cr === r && cc === c);
+      if (on) cell.style.background = PALETTE[patch.id] || '#5b6b8f';
+      else cell.classList.add('off');
+      grid.appendChild(cell);
+    }
+  }
+  chip.appendChild(grid);
+  chip.title = `${patch.id.toUpperCase()} 号补丁 · ${patch.cost} 纽扣 · 占 ${patch.time} 时间` +
+    ` · ${patch.income > 0 ? '每次经过纽扣格 +' + patch.income : '没有纽扣收益'}`;
+  return chip;
+}
+
+function renderRing() {
+  const st = S.state;
+  const stage = $('ringStage');
+  const far = $('ringFar');
+  const front = $('ringFront');
+  if (!stage || !far || !front) return;   // 老版本页面缓存里可能没有这套节点
+
+  const me = st.players[actSeat()];
+  const circle = st.circle || [];
+  const N = circle.length;
+  const neutral = st.neutral || 0;
+  const visible = (st.visible || []).slice(0, 3);
+
+  // ---- 标题：还剩多少块 ----
+  const label = $('ringLabel');
+  label.textContent = '补丁环';
+  const rest = document.createElement('span');
+  rest.className = 'ring-rest';
+  rest.textContent = N
+    ? `中立指示物前方 ${visible.length} 块 · 环上还剩 ${N} 块`
+    : '补丁已经全部买完';
+  label.appendChild(rest);
+
+  const count = $('ringCount');
+  if (count) count.innerHTML = `<b>${N}</b><span>块待选</span>`;
+
+  // ---- 环上的小补丁 ----
+  const step = N ? 360 / N : 0;
+  // 半径以 CSS 里那条虚线轨道为准，窄屏样式改了尺寸这里自动跟上
+  const guide = stage.querySelector('.ring-guide');
+  const R = guide && guide.offsetWidth ? guide.offsetWidth / 2 : RING.radius;
+  const arc = N > 1 ? (2 * Math.PI * R) / N : 96;
+  // 环上块数多的时候整体缩小，块数少了自然长大；相对大小（越远越小）一直保留
+  const globalS = Math.min(1, (arc * 0.98) / ringBaseMax());
+  const frontIds = new Set(visible);
+  const alive = new Set();
+
+  for (let i = 0; i < N; i += 1) {
+    const pid = circle[i];
+    // 相对正面的名次：0 就是中立指示物正前方那一块
+    const rel = (i - neutral + N) % N;
+    if (rel < 3 && frontIds.has(pid)) continue;   // 正面那 3 块由大卡片代表，环上不再画一遍
+
+    const patch = S.meta.patches.find((p) => p.id === pid);
+    if (!patch) continue;
+    alive.add(pid);
+
+    let chip = far.querySelector(`.ring-chip[data-patch-id="${pid}"]`);
+    if (!chip) {
+      chip = makeRingChip(patch);
+      chip.style.opacity = '0';                   // 新补丁淡入
+      far.appendChild(chip);
+      requestAnimationFrame(() => { chip.style.opacity = ''; });
+    }
+    const d = Math.min(rel, N - rel);              // 离正面有多远（按步数）
+    const dist = 0.45 + 0.55 * (1 - (d / Math.max(1, N / 2)) * 0.9);
+    // 33 块全在环上的时候，最远那几块会被缩成一个点，啥也看不出来。
+    // 给一个「最小格子」地板保证它认得出来；地板不超过整体缩放，所以不会互相压到。
+    const floor = Math.min(RING.minTile / RING.tile, globalS);
+    const s = Math.max(globalS * dist, floor);
+    const th = ((180 + rel * step) * Math.PI) / 180;
+    const x = Math.round(R * Math.sin(th));
+    const y = Math.round(-R * Math.cos(th));
+    // left/top:50% 把原点摆在环心，(x,y) 再把它挪到圆周上；scale 走 transform 才能平滑过渡
+    chip.style.transform =
+      `translate(calc(-50% + ${x}px), calc(-50% + ${y}px)) scale(${s.toFixed(3)})`;
   }
 
+  // 被买走的补丁从环上摘掉（下一帧才真正移除，先淡出）
+  Array.from(far.children).forEach((chip) => {
+    if (alive.has(chip.dataset.patchId)) return;
+    chip.style.opacity = '0';
+    chip.style.transform += ' scale(.2)';
+    setTimeout(() => chip.remove(), 220);
+  });
+
+  // ---- 中立指示物：夹在「正前方那一块」逆时针一侧 ----
+  const tok = $('ringNeutral');
+  if (tok) {
+    if (!N) {
+      tok.hidden = true;
+    } else {
+      tok.hidden = false;
+      const th = ((180 - step / 2) * Math.PI) / 180;
+      // 放在环内侧（不是环外）：环外那条带子留给正面的大卡片，
+      // 放外面会被舞台裁掉，而且离卡片太近。
+      const rTok = Math.max(30, R - 14);
+      const x = Math.round(rTok * Math.sin(th));
+      const y = Math.round(-rTok * Math.cos(th));
+      tok.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`;
+    }
+  }
+
+  renderRingFront(front, visible, me);
+}
+
+/** 正面那 3 块：放大、带完整数字、可点 */
+function renderRingFront(front, visible, me) {
+  front.innerHTML = '';
   for (let i = 0; i < 3; i += 1) {
-    const pid = st.visible[i];
+    const pid = visible[i];
     const card = document.createElement('div');
     if (!pid) {
       card.className = 'patch-card empty';
-      row.appendChild(card);
+      front.appendChild(card);
       continue;
     }
     const patch = S.meta.patches.find((p) => p.id === pid);
-    const affordable = me && me.buttons >= patch.cost;
+    if (!patch) continue;
+    const affordable = Boolean(me) && me.buttons >= patch.cost;
     const canPlay = canAct() && affordable && !S.leatherMode;
     card.className = 'patch-card' + (canPlay ? '' : ' disabled') +
       (S.selected && S.selected.patchId === pid ? ' selected' : '');
     card.dataset.patchId = pid;
 
-    // 第 1 张就是中立指示物正前方那块，标出来
-    if (i === 0) card.classList.add('next-up');
-
     const ori = patch.orientations[S.selected && S.selected.patchId === pid ? S.oriIndex : 0];
+    // 形状套一层固定高度的壳：卡片高度不能随补丁大小 / 那句「差 N 纽扣」变来变去
+    const shape = document.createElement('div');
+    shape.className = 'patch-shape';
     const grid = document.createElement('div');
     grid.className = 'patch-grid';
     grid.style.gridTemplateColumns = `repeat(${ori.cols}, auto)`;
@@ -382,7 +556,15 @@ function renderMarket() {
         grid.appendChild(cell);
       }
     }
-    card.appendChild(grid);
+    shape.appendChild(grid);
+
+    if (me && !affordable) {
+      const warn = document.createElement('div');
+      warn.className = 'patch-warn';
+      warn.textContent = `差 ${patch.cost - me.buttons} 纽扣`;
+      shape.appendChild(warn);
+    }
+    card.appendChild(shape);
 
     const meta = document.createElement('div');
     meta.className = 'patch-meta';
@@ -396,13 +578,6 @@ function renderMarket() {
     id.textContent = pid.toUpperCase();
     card.appendChild(id);
 
-    if (me && !affordable) {
-      const warn = document.createElement('div');
-      warn.className = 'patch-warn';
-      warn.textContent = `差 ${patch.cost - me.buttons} 纽扣`;
-      card.appendChild(warn);
-    }
-
     if (canPlay) {
       card.onclick = () => {
         // 选中即进入预览态：鼠标在哪，补丁就跟着预览到哪
@@ -412,8 +587,26 @@ function renderMarket() {
         render(S.state);
       };
     }
-    row.appendChild(card);
+    front.appendChild(card);
   }
+}
+
+/**
+ * 这一回合是不是「只能跳过」——三块可见的补丁一块都买不起。
+ * 最容易忘的就是这一步，所以要让「跳过」按钮跳出来提醒。
+ */
+function onlyAdvancePossible() {
+  const st = S.state;
+  if (!st || st.phase !== 'playing') return false;
+  if (!canAct() || S.leatherMode) return false;
+  const me = st.players[actSeat()];
+  if (!me) return false;
+  const vis = st.visible || [];
+  if (!vis.length) return true;                 // 补丁卖光了，只剩跳过
+  return vis.every((id) => {
+    const p = S.meta.patches.find((x) => x.id === id);
+    return !p || me.buttons < p.cost;
+  });
 }
 
 /**
@@ -491,6 +684,18 @@ function renderQuilt(el, player, seat, interactive) {
   const valid = anchor ? canPreviewPlace(preview, anchor.row, anchor.col, player) : false;
   const locked = Boolean(S.locked);
 
+  // 别人的回合：把他正在琢磨的补丁画成半透明的「幽灵」，看得见他在干什么
+  const cur = !interactive && st.phase === 'playing' ? S.cursors[seat] : null;
+  let ghost = null;
+  let ghostAnchor = null;
+  if (cur && cur.patchId) {
+    const gp = S.meta.patches.find((p) => p.id === cur.patchId);
+    if (gp) {
+      ghost = gp.orientations[cur.oriIndex] || gp.orientations[0];
+      if (cur.row !== null && cur.row !== undefined) ghostAnchor = { row: cur.row, col: cur.col };
+    }
+  }
+
   for (let r = 0; r < S.meta.boardSize; r += 1) {
     for (let c = 0; c < S.meta.boardSize; c += 1) {
       const cell = document.createElement('div');
@@ -525,6 +730,17 @@ function renderQuilt(el, player, seat, interactive) {
           ([dr, dc]) => anchor.row + dr === r && anchor.col + dc === c
         );
         if (!onShape) cell.classList.add('cursor');
+      }
+
+      // 对手的幽灵预览：落在他的板上，用的是他那一刻的真实落点
+      if (ghost && ghostAnchor) {
+        const on = ghost.cells.some(
+          ([dr, dc]) => ghostAnchor.row + dr === r && ghostAnchor.col + dc === c
+        );
+        if (on) {
+          cell.classList.add('ghost');
+          cell.style.setProperty('--ghost', SEAT_COLORS[seat % SEAT_COLORS.length]);
+        }
       }
 
       if (interactive) {
@@ -582,6 +798,12 @@ function renderActionbar() {
   const st = S.state;
   const myTurn = canAct();
   const me = st.players[actSeat()];
+  const onlySkip = onlyAdvancePossible();
+
+  // 只剩跳过可做的时候，把这个按钮放大高亮 —— 这一步最容易忘
+  const adv = $('btnAdvance');
+  adv.classList.toggle('only-option', onlySkip);
+  adv.title = onlySkip ? '三块补丁一块都买不起，只能跳过领纽扣' : '';
 
   // 上一条短暂提示（"这里放不下"之类）有时效，过期就清掉
   if (S.hintUntil && Date.now() > S.hintUntil) { S.hintText = null; S.hintUntil = 0; }
@@ -620,6 +842,12 @@ function renderActionbar() {
     $('btnRotate').disabled = !myTurn;
     $('btnFlip').disabled = !myTurn;
     $('btnConfirm').disabled = !(myTurn && S.locked && valid);
+    $('btnAdvance').disabled = !myTurn;
+  } else if (onlySkip) {
+    $('selInfo').innerHTML = '<b>三块补丁一块都买不起</b>，只能跳过领纽扣';
+    $('btnRotate').disabled = true;
+    $('btnFlip').disabled = true;
+    $('btnConfirm').disabled = true;
     $('btnAdvance').disabled = !myTurn;
   } else {
     $('selInfo').textContent = myTurn ? '选一块补丁，或跳过领纽扣' : `等待 ${nameOf(st.active)} 行动…`;
@@ -761,6 +989,7 @@ function onCellEnter(r, c, seat) {
   if (prev && prev.row === r && prev.col === c) return;
   renderQuiltOnly();
   renderActionbar(); // 操作条那句提示也依赖落点，得跟着一起刷新
+  sendCursor();      // 联机时让对手看到我在往哪挪
 }
 
 /** 鼠标移出拼布板：清掉跟随用的位置（已固定的落点不受影响） */
@@ -831,6 +1060,52 @@ function renderQuiltOnly() {
   const seat = actSeat();
   const card = $('playersWrap').querySelector(`.player-card[data-seat="${seat}"]`);
   if (card && S.state) renderQuilt(card._quilt, S.state.players[seat], seat, true);
+}
+
+/** 只重画某一个座位的拼布板（收别人的实时预览时用，免得整屏都在闪） */
+function renderCursorSeat(seat) {
+  const st = S.state;
+  if (!st || seat === actSeat()) return;      // 自己那块板由本地预览负责
+  const card = $('playersWrap').querySelector(`.player-card[data-seat="${seat}"]`);
+  const p = st.players[seat];
+  if (!card || !p) return;
+  renderQuilt(card._quilt, p, seat, false);
+}
+
+/* ---------------- 把自己的实时预览广播出去 ----------------
+ * 联机时对手只能看到「轮到我出手了」，看不到我在挑哪块、想放哪。
+ * 这里把当前选中 + 朝向 + 落点节流后发给服务端，由服务端转发给同房其他人。
+ * 同机双人 / 人机没有第二块屏幕，不用发。
+ */
+let cursorTimer = null;
+let lastCursorKey = '';
+
+function sendCursor() {
+  const st = S.state;
+  if (!st || st.mode !== 'online' || st.phase !== 'playing') return;
+  if (!canAct() || S.leatherMode) {
+    if (lastCursorKey !== '') { lastCursorKey = ''; send({ type: 'cursor', patchId: null }); }
+    return;
+  }
+  const sel = S.selected;
+  let key = 'none';
+  let payload = { type: 'cursor', patchId: null };
+  if (sel) {
+    const ori = currentOrientation();
+    const anchor = currentAnchor(ori);
+    key = `${sel.patchId}|${S.oriIndex}|${anchor ? anchor.row + ',' + anchor.col : '-'}`;
+    payload = {
+      type: 'cursor',
+      patchId: sel.patchId,
+      oriIndex: S.oriIndex,
+      row: anchor ? anchor.row : null,
+      col: anchor ? anchor.col : null,
+    };
+  }
+  if (key === lastCursorKey) return;
+  lastCursorKey = key;
+  clearTimeout(cursorTimer);
+  cursorTimer = setTimeout(() => send(payload), 70);   // 节流，别把鼠标每一动都发出去
 }
 
 /** 旋转：固定中的落点保留；转完若放不下就自动解除固定，让预览回到鼠标 */
@@ -948,8 +1223,19 @@ function escapeHtml(s) {
 /* ---------------- 更新日志 ---------------- */
 const CHANGELOG = [
   {
-    v: 'v1.2',
+    v: 'v1.3',
     date: '当前',
+    items: [
+      '<b>补上可视的旋转补丁环</b>：中间那圈不再是三张孤零零的卡片，而是完整的补丁环 —— 所有还没被买走的补丁沿环排布、离正面越远画得越小，环心写着还剩几块。买走一块，中立指示物前移一格，整圈平滑地转过去。',
+      '<b>按原版修正了环的顺序</b>：环每局重新洗牌（位置都不一样）；那块 2×1 的补丁应该排在环的最后一块，开局可选的三块里没有它。以前把它摆在环首，等于白送。',
+      '<b>「跳过领纽扣」会自己跳出来</b>：当你三块补丁一块都买不起、只能跳过时，这个按钮会放大、变金、持续闪动 —— 这一步最容易忘。',
+      '<b>联机地址显示在主菜单</b>：以前那个「给朋友」的网址只印在 PowerShell 黑窗口里，窗口一关就找不到了。现在直接显示在联机区，还带一键复制。',
+      '<b>能看见对手在琢磨什么</b>：联机时你选中补丁、把鼠标挪到落点上，对手那块拼布板上会出现一块半透明的预览，跟着你动；顶栏也会写「某某正在放 X」。',
+    ],
+  },
+  {
+    v: 'v1.2',
+    date: '上一版',
     items: [
       '<b>修好了「再来一局」</b>：以前点它没有任何反应 —— 服务端把重开请求挡在了「对局已结束」的判断后面，永远走不到。',
       '<b>新增人机对战</b>：内置电脑对手，会挑收益高、好拼的补丁，也会躲开拼不上的死角；可以选普通 / 轻松。',
@@ -962,7 +1248,7 @@ const CHANGELOG = [
   },
   {
     v: 'v1.1',
-    date: '上一版',
+    date: '更早',
     items: [
       '<b>修正时间板数据</b>：纽扣格应为 9 个、皮革格应为 5 个（原来写反了），终点格 53 本身就是最后一枚纽扣格。',
       '<b>放置交互改成</b>：选中补丁即时预览 → 左键固定落点 → 点「确认放置」，不再依赖右键。',
@@ -1144,7 +1430,29 @@ async function boot() {
 
   const res = await fetch('/api/info');
   S.meta = await res.json();
+  renderNetHint();
   autoJoinIfRequested();
+}
+
+/**
+ * 主菜单直接显示「让朋友打开这个地址」。
+ * 以前这个地址只印在 PowerShell 黑窗口里，关掉窗口就找不到了。
+ */
+function renderNetHint() {
+  const box = $('netHint');
+  if (!box) return;
+  const urls = ((S.meta && S.meta.netUrls) || []).slice(0, 2);
+  if (!urls.length) { box.hidden = true; return; }
+  box.hidden = false;
+  $('netUrl').textContent = urls[0];
+  $('btnCopyUrl').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(urls.join('\n'));
+      setMenuMsg('联机地址已复制，发给朋友就行', true);
+    } catch (e) {
+      setMenuMsg('复制失败，手动输入：' + urls.join(' / '), false);
+    }
+  };
 }
 
 /** 支持 ?join=房间码&name=名字 直接进房；刷新页面也能凭 token 回到原位 */

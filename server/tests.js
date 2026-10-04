@@ -26,6 +26,22 @@ function eq(name, actual, expected) {
   check(name, actual === expected, 'expected ' + expected + ', got ' + actual);
 }
 
+/**
+ * 把某块补丁挪到中立指示物的正前方（可见的第一块）。
+ * 补丁环每局随机，写「买某某补丁」这类针对性用例时得先把目标摆到可选位。
+ */
+function forceVisible(state, patchId) {
+  const idx = state.circle.indexOf(patchId);
+  if (idx >= 0) {
+    state.circle.splice(idx, 1);
+    state.circle.unshift(patchId);
+  } else {
+    state.circle.unshift(patchId);
+  }
+  state.neutral = 0;
+  return state;
+}
+
 console.log('\n[1] 组件与数据');
 eq('补丁总数 33', PATCHES.length, 33);
 eq('补丁 id 唯一', new Set(PATCHES.map((p) => p.id)).size, 33);
@@ -77,7 +93,14 @@ console.log('\n[3] 开局状态');
 const g1 = engine.createGame(['甲', '乙']);
 eq('双方起始纽扣 5', g1.players[0].buttons + g1.players[1].buttons, START_BUTTONS * 2);
 eq('双方起始时间 0', g1.players[0].time + g1.players[1].time, 0);
-eq('中立位在 A 之后，可见 A', engine.visiblePatchIds(g1)[0], 'A');
+check('补丁环一共 33 块、每块只出现一次',
+  new Set(g1.circle).size === g1.circle.length && g1.circle.length === PATCHES.length,
+  `length=${g1.circle.length}`);
+// 原版：中立指示物夹在 2×1 补丁与它顺时针方向下一块之间，所以 A 在环尾，开局不可选
+eq('2×1 补丁排在环的最后一块', g1.circle[g1.circle.length - 1], 'A');
+check('开局可见的三块里没有 2×1 补丁', !engine.visiblePatchIds(g1).includes('A'),
+  engine.visiblePatchIds(g1).join(','));
+eq('可见的三块就是环上前三块', engine.visiblePatchIds(g1).join(','), g1.circle.slice(0, 3).join(','));
 eq('初始行动者为玩家 0', engine.activePlayerIndex(g1), 0);
 eq('拼布板 9x9 全空', engine.emptySpaces(g1.players[0].board), 81);
 
@@ -181,13 +204,14 @@ eq('后到者经过已领走的皮革格不会再获得', g5c.pendingLeather.len
 console.log('\n[8] 行动 B：买下并放置补丁');
 const g6 = engine.createGame(['甲', '乙']);
 g6.players[0].buttons = 20;
-const patchA = engine.PATCH_BY_ID.get('A');
-const buyRes = engine.buyPatch(g6, 0, 'A', 0, 0, 0);
+forceVisible(g6, 'A'); // 把 2×1 摆到可选位再买
+engine.buyPatch(g6, 0, 'A', 0, 0, 0);
 eq('扣掉按钮成本 2', g6.players[0].buttons, 18);
 eq('时间前进 1', g6.players[0].time, 1);
 check('补丁已落在板上', g6.players[0].board[0][0] !== null && g6.players[0].board[1][0] !== null);
 check('补丁已从环上移除', !g6.circle.includes('A'));
 eq('中立指示物仍指向原 A 的位置', engine.visiblePatchIds(g6)[0], g6.circle[0]);
+eq('买走的那块被删掉后环长 32', g6.circle.length, 32);
 
 console.log('\n[9] 放置合法性');
 const g7 = engine.createGame(['甲', '乙']);
@@ -195,34 +219,38 @@ g7.players[0].buttons = 50;
 // 让玩家 0 保持在时间落后的状态，以便连续行动
 g7.players[1].time = 0;
 g7.players[0].time = -1; // 仅用于构造连续行动场景
+forceVisible(g7, 'A');
 engine.buyPatch(g7, 0, 'A', 0, 0, 0); // A 只前进 1 格，玩家 0 仍落后
 const occupied = g7.players[0].board[0][0] !== null && g7.players[0].board[1][0] !== null;
 eq('玩家 0 仍在时间落后位（可继续行动）', engine.activePlayerIndex(g7), 0);
 // 明确用一块竖 3 格的补丁去撞 (0,0)，必然重叠
 g7.players[0].buttons = 50;
-if (!g7.circle.includes('D')) g7.circle.unshift('D');
-g7.neutral = (g7.circle.indexOf('D') - 1 + g7.circle.length) % g7.circle.length;
+forceVisible(g7, 'D');
 let threw = false;
 try { engine.buyPatch(g7, 0, 'D', 0, 0, 0); } catch (e) { threw = true; }
 check('重叠放置被拒绝（0,0/1,0 已被占用）', occupied && threw);
 
 const g7b = engine.createGame(['甲', '乙']);
 g7b.players[0].buttons = 50;
+forceVisible(g7b, 'A');
 let threwOut = false;
 try { engine.buyPatch(g7b, 0, 'A', 0, 8, 8); } catch (e) { threwOut = true; }
 check('越界放置被拒绝', threwOut);
 
 const g8 = engine.createGame(['甲', '乙']);
 g8.players[0].buttons = 0;
+forceVisible(g8, 'A'); // 让它有资格可选，测的才是「纽扣不足」而不是「不在可选范围」
 let threw2 = false;
-try { engine.buyPatch(g8, 0, 'A', 0, 0, 0); } catch (e) { threw2 = true; }
-check('纽扣不足时无法购买', threw2);
+let threw2Msg = '';
+try { engine.buyPatch(g8, 0, 'A', 0, 0, 0); } catch (e) { threw2 = true; threw2Msg = e.message; }
+check('纽扣不足时无法购买', threw2 && threw2Msg.includes('纽扣'), threw2Msg);
 
 const g9 = engine.createGame(['甲', '乙']);
 g9.players[0].buttons = 50;
+forceVisible(g9, 'A');
 let threw3 = false;
-try { engine.buyPatch(g9, 0, g9.circle[2], 0, 0, 0); } catch (e) { threw3 = true; }
-check('可见范围外的补丁不可购买或抛错取决于数据', typeof threw3 === 'boolean');
+try { engine.buyPatch(g9, 0, 'A', 0, 0, 0); } catch (e) { threw3 = true; }
+check('可见范围内的补丁可以购买', threw3 === false);
 
 console.log('\n[10] 买块顺序：中立指示物只前移不后退');
 const g10 = engine.createGame(['甲', '乙']);
@@ -331,12 +359,13 @@ function prepSeven(player, patchId, oriIndex) {
 const m3 = engine.createGame(['甲', '乙', '丙']);
 m3.players.forEach((p) => { p.buttons = 99; });
 prepSeven(m3.players[0], 'A', 0);
+forceVisible(m3, 'A');
 engine.buyPatch(m3, 0, 'A', 0, 0, 0);
 eq('先拼出 7x7 的甲拿到奖励', m3.bonusTileOwner, 0);
 eq('甲的 hasBonusTile 为真', m3.players[0].hasBonusTile, true);
 // 把 A 放回环上并让乙也拼出 7x7
-m3.circle = ['A'].concat(m3.circle);
-m3.neutral = m3.circle.length - 1;
+m3.circle.push('A');
+forceVisible(m3, 'A');
 prepSeven(m3.players[1], 'A', 0);
 engine.buyPatch(m3, 1, 'A', 0, 0, 0);
 eq('奖励已被拿走，乙不再获得', m3.players[1].hasBonusTile, false);

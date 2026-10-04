@@ -167,6 +167,26 @@ const MAX_ONLINE = 6;
 /** 电脑思考多久再落子，太快要看不清它在干什么 */
 const BOT_DELAY_MS = Number(process.env.PATCHWORK_BOT_DELAY || 750);
 
+/**
+ * 本机在局域网里的 IPv4 地址（排除回环）。
+ * 启动横幅和主菜单都要用同一份，抽出来避免两处各写一遍。
+ */
+function lanAddresses() {
+  const nets = require('os').networkInterfaces();
+  const out = [];
+  Object.keys(nets).forEach((name) => {
+    (nets[name] || []).forEach((net) => {
+      if (net.family === 'IPv4' && !net.internal) out.push({ name, address: net.address });
+    });
+  });
+  return out;
+}
+
+/** 局域网可访问的完整地址，给朋友用 */
+function lanUrls() {
+  return lanAddresses().map((a) => `http://${a.address}:${PORT}`);
+}
+
 function makeRoomCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   for (;;) {
@@ -206,6 +226,7 @@ function createRoom(opts) {
     botTimer: null,
     rematchVotes: new Set(),
     history: [], // 对局事件流水，供中途加入的人回看
+    cursors: {}, // 各座位「正在考虑放哪」的实时预览，只转发不落库
     createdAt: Date.now(),
   };
   room.seats = new Array(room.slots).fill(null);
@@ -238,6 +259,7 @@ function startGame(room) {
   room.state = engine.createGame(list);
   room.history = [];
   room.rematchVotes.clear();
+  room.cursors = {};
   room.botTimer = null;
 }
 
@@ -248,6 +270,26 @@ function newRound(room) {
   room.state = engine.createGame(room.playerNames.map((n, i) => ({ name: n, bot: wasBot.has(i) })));
   room.history = [];
   room.rematchVotes.clear();
+  room.cursors = {};
+}
+
+/**
+ * 把某个座位的实时预览转发给同房间的其他人。
+ * 刻意不走 broadcast：这东西每几十毫秒就可能变一次，
+ * 走整包 state 会让所有人的界面跟着重绘，得不偿失。
+ */
+function relayCursor(room, fromSeat, payload) {
+  room.seats.forEach((s, i) => {
+    if (!s || !s.socket || i === fromSeat) return;
+    send(s.socket, Object.assign({ type: 'cursor', seat: fromSeat }, payload));
+  });
+}
+
+/** 某个座位动作已落定 / 掉线了，把他留在别人屏幕上的幽灵预览擦掉 */
+function clearCursor(room, seat) {
+  if (!room.cursors || !room.cursors[seat]) return;
+  room.cursors[seat] = null;
+  relayCursor(room, seat, { patchId: null });
 }
 
 /** 对外广播的视图：隐藏对手的私有信息（本作无隐藏信息，全部可见） */
@@ -451,6 +493,21 @@ function handleMessage(room, connIndex, msg) {
 
   if (!st) return;
 
+  // 实时预览：只是「我正在考虑把哪块补丁放到哪」，不改变任何局面。
+  // 直接转发给同房间其他座位，让大家能看到对手正在琢磨什么。
+  if (msg.type === 'cursor') {
+    if (room.mode !== 'online') return;
+    const payload = msg.patchId ? {
+      patchId: String(msg.patchId).slice(0, 4),
+      oriIndex: Number(msg.oriIndex) | 0,
+      row: Number.isInteger(msg.row) ? msg.row : null,
+      col: Number.isInteger(msg.col) ? msg.col : null,
+    } : { patchId: null };
+    room.cursors[connIndex] = payload;
+    relayCursor(room, connIndex, payload);
+    return;
+  }
+
   // 「再来一局」必须在「已结束」判断**之前**处理 ——
   // 它本来就是终局后才点的，放在后面等于永远走不到（v1.1 的 bug）。
   if (msg.type === 'rematch') {
@@ -471,6 +528,7 @@ function handleMessage(room, connIndex, msg) {
       const ev = [{ type: 'leatherPlaced', row: msg.row, col: msg.col, player: want }];
       st.lastEvents = ev;
       remember(room, ev, want);
+      clearCursor(room, want);
       broadcast(room);
       maybeRunBot(room);
       return;
@@ -487,6 +545,7 @@ function handleMessage(room, connIndex, msg) {
     } else {
       throw new Error('未知的操作');
     }
+    clearCursor(room, want);
     broadcast(room);
     maybeRunBot(room);
   } catch (err) {
@@ -531,6 +590,10 @@ const server = http.createServer((req, res) => {
       boardSize: BOARD_SIZE,
       lastSpace: LAST_SPACE,
       rooms: rooms.size,
+      port: PORT,
+      localUrl: `http://localhost:${PORT}`,
+      // 局域网地址：主菜单直接显示出来，省得让用户回那个黑窗口里找
+      netUrls: lanUrls(),
     }));
     return;
   }
@@ -561,6 +624,7 @@ server.on('upgrade', (req, socket) => {
       seat.connected = false;
       seat.socket = null;
       seat.disconnectedAt = Date.now();
+      clearCursor(room, seatIndex);
       broadcast(room);
     }
   };
@@ -667,13 +731,7 @@ server.on('upgrade', (req, socket) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  const nets = require('os').networkInterfaces();
-  const addrs = [];
-  Object.keys(nets).forEach((name) => {
-    (nets[name] || []).forEach((net) => {
-      if (net.family === 'IPv4' && !net.internal) addrs.push({ name, address: net.address });
-    });
-  });
+  const addrs = lanAddresses();
 
   // Windows 的 cmd 默认用 GBK(936) 解码，而 Node 输出的是 UTF-8 字节，中文会乱码。
   // 启动脚本里已经先执行过 chcp 65001，这里再确认一次，保证输出正确。

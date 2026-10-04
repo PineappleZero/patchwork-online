@@ -24,11 +24,18 @@ function shuffle(list, rng = Math.random) {
 }
 
 /**
- * 建立补丁环：中立指示物放在最小的 A 补丁之后，因此 A 排在第 0 位。
+ * 建立补丁环（每局随机打乱，与原版一致）。
+ *
+ * 原版规则书：「找到最小的那块补丁（1×2），把中立指示物放在**它和顺时针方向下一块之间**」。
+ * 可选的三块指的是中立指示物之后、顺时针方向的三块 —— 所以那块 2×1 补丁本身
+ * 不在开局的三块里，它应该是环上的**最后一块**（紧挨着中立指示物的逆时针一侧）。
+ *
+ * 数据模型：circle[neutral] 就是中立指示物顺时针方向的第一块，可见的三块即
+ * circle[neutral..neutral+2]。
  */
 function buildCircle(rng) {
   const rest = shuffle(PATCHES.filter((p) => p.id !== 'A').map((p) => p.id), rng);
-  return ['A', ...rest];
+  return [...rest, 'A'];
 }
 
 function createPlayer(name, index, isBot) {
@@ -301,7 +308,7 @@ function createGame(players, rng = Math.random) {
   const list = raw.map((p) => (typeof p === 'string' ? { name: p } : (p || {})));
   const state = {
     circle: buildCircle(rng),
-    neutral: 0, // 中立指示物位于 index-1（即最后一块之后）；可见的是 0,1,2
+    neutral: 0, // 中立指示物夹在 circle[length-1] 与 circle[0] 之间；可见的是 0,1,2
     players: list.map((p, i) => createPlayer(p.name, i, p.bot)),
     leatherClaimed: TIME_BOARD.map((k) => k !== 'leather'),
     pendingLeather: [], // 已获得但还没选落点的 1x1 皮革补丁

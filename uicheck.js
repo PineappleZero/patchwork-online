@@ -1,8 +1,8 @@
 'use strict';
 
 /*
- * v1.2 界面联调：用 CDP 驱动本机 Edge，逐屏截图并断言关键布局。
- * 覆盖：主菜单 / 人机对战 / 事件纪要滚动 / 更新日志 / 六人联机等待房与对局。
+ * v1.3 界面联调：用 CDP 驱动本机 Edge，逐屏截图并断言关键布局。
+ * 覆盖：主菜单（含联机网址）/ 人机对战 / 补丁环 / 跳过按钮高亮 / 事件纪要滚动 / 更新日志 / 六人联机。
  *
  * 用两个 Edge 实例：A 跑单机部分，B 跑联机部分。
  * 因为「返回主菜单」会整页重载，而 localStorage 里还存着上一局的座位，
@@ -14,7 +14,9 @@ const crypto = require('crypto');
 const { launchEdge, evaluate, waitFor, screenshot, collectErrors, sleep } = require('./browserkit');
 
 const HOST = '127.0.0.1';
-const PORT = 3178;
+// 端口跟着环境变量走：开发时可以在别的端口起一份服务，
+// 不要去打扰正在被朋友连着的那一份（以前这里写死 3178，结果测的是旧服务端）。
+const PORT = Number(process.env.PORT || 3178);
 const URL_BASE = `http://${HOST}:${PORT}/`;
 
 /* ---------------- 极简 WebSocket 客户端（走游戏协议，不是 CDP） ---------------- */
@@ -103,6 +105,7 @@ function ok(cond, label, extra) {
 
     console.log('\n[1] 主菜单');
     await waitFor(ws, `document.getElementById('menu').classList.contains('active')`, 12000, '主菜单出现');
+    await waitFor(ws, `!document.getElementById('netHint').hidden`, 8000, '联机网址渲染出来');
     await sleep(400);
     await screenshot(ws, 'v13-1-menu.png');
 
@@ -123,6 +126,22 @@ function ok(cond, label, extra) {
     ok(menu.cards === 2, '单机有两个模式入口', '实际 ' + menu.cards);
     ok(menu.counts.join(',') === '2,3,4,5,6', '人数可选 2~6', menu.counts.join(','));
     ok(menu.visible, '菜单整卡在视口内', `高 ${menu.h} / 视口 ${menu.vh}`);
+
+    const net = await evaluate(ws, `(function(){
+      const box = document.getElementById('netHint');
+      const code = document.getElementById('netUrl');
+      const btn = document.getElementById('btnCopyUrl');
+      const r = code.getBoundingClientRect();
+      return {
+        shown: !box.hidden,
+        text: code.textContent,
+        hasBtn: !!btn,
+        fits: r.width > 40 && r.right <= window.innerWidth,
+      };
+    })()`);
+    ok(net.shown && /^http:\/\/\d+\.\d+\.\d+\.\d+:\d+$/.test(net.text),
+      '主菜单显示联机网址（不用再去 PowerShell 里找）', net.text);
+    ok(net.hasBtn && net.fits, '网址后面有复制按钮，且没被挤出视口');
 
     console.log('\n[2] 人机对战');
     await evaluate(ws, `document.getElementById('btnSolo').click()`);
@@ -150,6 +169,105 @@ function ok(cond, label, extra) {
     ok(solo.gridCols === 2, '双人两列并排', '实际 ' + solo.gridCols + ' 列');
     ok(solo.mode === '人机对战', '模式标签正确', solo.mode);
     ok(solo.copyHidden, '单机模式隐藏「复制邀请」');
+
+    console.log('\n[2b] 补丁环（v1.3 的主角）');
+    const ring = await evaluate(ws, `(function(){
+      const st = window.__pw.state;
+      const stage = document.getElementById('ringStage');
+      const guide = stage.querySelector('.ring-guide');
+      const chips = Array.from(document.getElementById('ringFar').children);
+      const sr = stage.getBoundingClientRect();
+      const gr = guide.getBoundingClientRect();
+      const box = (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; };
+      const chipsBox = chips.map(box);
+      const outside = chipsBox.filter((b) => b.x < sr.x - 1 || b.y < sr.y - 1 ||
+        b.x + b.w > sr.x + sr.width + 1 || b.y + b.h > sr.y + sr.height + 1).length;
+      // 每个小补丁到环心的距离，应该都贴着圆周
+      const radii = chipsBox.map((b) => {
+        const dx = (b.x + b.w / 2) - (gr.x + gr.width / 2);
+        const dy = (b.y + b.h / 2) - (gr.y + gr.height / 2);
+        return Math.round(Math.hypot(dx, dy));
+      });
+      const front = Array.from(document.getElementById('ringFront').children);
+      return {
+        N: st.circle.length,
+        neutral: st.neutral,
+        visible: st.visible,
+        chips: chips.length,
+        chipIds: chips.map((c) => c.dataset.patchId),
+        frontIds: front.map((c) => c.dataset.patchId),
+        frontHasGrid: front.every((c) => c.querySelector('.patch-grid') && c.querySelector('.patch-meta')),
+        guideD: Math.round(gr.width),
+        stage: { w: Math.round(sr.width), h: Math.round(sr.height) },
+        outside,
+        minR: Math.min(...radii), maxR: Math.max(...radii),
+        count: (document.getElementById('ringCount') || {}).textContent || '',
+        neutralShown: !document.getElementById('ringNeutral').hidden,
+        neutralInStage: (function(){
+          const n = document.getElementById('ringNeutral').getBoundingClientRect();
+          return n.y + n.height <= sr.y + sr.height + 1 && n.x >= sr.x - 1 && n.x + n.width <= sr.x + sr.width + 1;
+        })(),
+        overflow: document.getElementById('centerCol').scrollHeight - document.getElementById('centerCol').clientHeight,
+      };
+    })()`);
+    ok(ring.chips === ring.N - 3, '环上画出了「剩下的块数 − 正面前三块」个小补丁',
+      `chips=${ring.chips} N=${ring.N}`);
+    ok(ring.frontIds.length === 3 && ring.frontIds.join(',') === ring.visible.join(','),
+      '正面三张卡片就是中立指示物前方那三块', ring.frontIds.join(',') + ' vs ' + ring.visible.join(','));
+    ok(new Set(ring.chipIds.concat(ring.frontIds)).size === ring.N,
+      '环上 + 正面合起来正好是全部剩余补丁，不重不漏');
+    ok(!ring.chipIds.includes('A') || ring.N > 3, '2×1 那块不再霸占正面（原版规则）');
+    ok(ring.frontHasGrid, '正面三张卡片都带着补丁形状和三个数字');
+    ok(ring.guideD >= 140 && ring.guideD <= 200, '环的轨道直径在合理区间', ring.guideD + 'px');
+    ok(ring.outside === 0, '没有小补丁溢出环的舞台', '溢出 ' + ring.outside + ' 个');
+    ok(ring.maxR - ring.minR <= 2 && ring.maxR > 60,
+      '每个小补丁都贴在圆周上', `半径 ${ring.minR}~${ring.maxR}`);
+    ok(ring.count.indexOf(String(ring.N)) >= 0, '环心写着还剩几块', JSON.stringify(ring.count));
+    ok(ring.neutralShown && ring.neutralInStage, '中立指示物画在环上且没被裁掉');
+    ok(ring.overflow <= 0, '中间列没有被撑出滚动条', 'overflow=' + ring.overflow);
+    await screenshot(ws, 'v14-1-ring.png');
+
+    console.log('\n[2c] 只剩跳过时，「跳过领纽扣」会跳出来');
+    // 分三步：先把纽扣清零并重绘，等放大动画跑完再读样式，最后恢复原状。
+    // （一步做完会读到过渡中间态：transform 还是 matrix(1,0,0,1,0,0)）
+    const zeroed = await evaluate(ws, `(function(){
+      const st = window.__pw.state;
+      const me = st.players[window.__pw.actSeat()];
+      window.__advBackup = me.buttons;
+      const costs = st.visible.map((id) => (window.__pw.meta.patches.find((p) => p.id === id) || {}).cost);
+      // 置成「比最便宜那块还少 1 个」：33 块里有唯一一块 0 成本的补丁，
+      // 直接清零在它出现时并不能构成「一块都买不起」。
+      me.buttons = Math.min.apply(null, costs.concat([0])) - 1;
+      // 走一条真实的重绘路径：Esc 会让界面按当前 state 重画一次
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      return { costs, buttons: me.buttons, phase: st.phase, canAct: window.__pw.canAct(), leather: st.pendingLeather.length };
+    })()`);
+    await sleep(400);
+    const adv = await evaluate(ws, `(function(){
+      const el = document.getElementById('btnAdvance');
+      const cs = getComputedStyle(el);
+      return {
+        cls: el.className,
+        has: el.classList.contains('only-option'),
+        scale: cs.transform,
+        tint: cs.backgroundImage.slice(0, 30),
+        anim: cs.animationName,
+        tip: document.getElementById('selInfo').textContent,
+      };
+    })()`);
+    const restored = await evaluate(ws, `(function(){
+      const st = window.__pw.state;
+      st.players[window.__pw.actSeat()].buttons = window.__advBackup;
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      return document.getElementById('btnAdvance').className;
+    })()`);
+    ok(adv.has, '买不起任何补丁时「跳过领纽扣」被加上高亮',
+      JSON.stringify(Object.assign({}, adv, zeroed)));
+    ok(/matrix\(1\.1/.test(adv.scale), '按钮被放大到 1.1 倍以上', adv.scale);
+    ok(adv.tint.indexOf('gradient') >= 0, '按钮变成金色渐变', adv.tint);
+    ok(adv.anim === 'advPulse', '按钮在持续闪动提醒', adv.anim);
+    ok(adv.tip.indexOf('买不起') >= 0, '操作条同步说明原因', adv.tip);
+    ok(restored.indexOf('only-option') < 0, '买得起之后高亮自动撤掉', restored);
 
     console.log('\n[3] 事件纪要（用户第二次反馈的那个）');
     const logBox = await evaluate(ws, `(function(){
@@ -208,9 +326,9 @@ function ok(cond, label, extra) {
     })()`);
     ok(cl.show, '更新日志弹层能打开');
     ok(cl.vers >= 3, '包含 3 个及以上版本', '实际 ' + cl.vers);
-    ok(cl.first.indexOf('v1.2') === 0, '首条是 v1.2', cl.first);
-    ok(cl.items >= 5, 'v1.2 条目不少于 5 条', '实际 ' + cl.items);
-    await screenshot(ws, 'v13-4-changelog.png');
+    ok(cl.first.indexOf('v1.3') === 0, '首条是 v1.3', cl.first);
+    ok(cl.items >= 5, 'v1.3 条目不少于 5 条', '实际 ' + cl.items);
+    await screenshot(ws, 'v14-2-changelog.png');
 
     /* ================= B：联机部分 ================= */
     const wsb = edgeB.ws;
@@ -285,6 +403,30 @@ function ok(cond, label, extra) {
     ok(six.mode.indexOf('6') >= 0, '模式标签显示 6 人联机', six.mode);
     ok(!six.cardsOverflow, '六块拼布板一屏看得全，不用滚动',
       `scrollHeight ${six.wrapScroll} vs clientHeight ${six.wrapClient}`);
+
+    // 六人时中间列最窄，环也得完整待着
+    const sixRing = await evaluate(wsb, `(function(){
+      const stage = document.getElementById('ringStage');
+      const sr = stage.getBoundingClientRect();
+      const chips = Array.from(document.getElementById('ringFar').children);
+      let outside = 0;
+      chips.forEach((c) => {
+        const b = c.getBoundingClientRect();
+        if (b.x < sr.x - 1 || b.y < sr.y - 1 || b.x + b.w > sr.x + sr.width + 1 || b.y + b.h > sr.y + sr.height + 1) outside += 1;
+      });
+      const col = document.getElementById('centerCol');
+      const front = document.getElementById('ringFront').getBoundingClientRect();
+      return {
+        chips: chips.length,
+        outside,
+        overflow: col.scrollHeight - col.clientHeight,
+        frontH: Math.round(front.height),
+        ringW: Math.round(stage.getBoundingClientRect().width),
+      };
+    })()`);
+    ok(sixRing.chips > 0 && sixRing.outside === 0,
+      '六人布局下补丁环没有被挤爆', `chips=${sixRing.chips} 溢出=${sixRing.outside}`);
+    ok(sixRing.overflow <= 0, '六人时中间列也不出滚动条', 'overflow=' + sixRing.overflow);
     ok(!six.pageScrolls, '整页没有出现滚动条（布局没撑破）');
 
     const tok = await evaluate(wsb, `(function(){

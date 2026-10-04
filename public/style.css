@@ -130,6 +130,32 @@ select option { background: var(--panel); color: var(--text); }
   border-top: 1px solid var(--line-soft);
 }
 
+/* 主菜单里那条「让朋友打开这个地址」—— 以前只印在 PowerShell 里 */
+.net-hint {
+  background: #17202f;
+  border: 1px solid #2b4155;
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
+  margin-bottom: 10px;
+}
+.nh-label { font-size: 11.5px; color: var(--text-dim); margin-bottom: 6px; }
+.nh-row { display: flex; align-items: center; gap: 8px; }
+.nh-row code {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12.5px;
+  color: var(--gold);
+  background: #0f141d;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 5px 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: all;
+}
+
 .title {
   margin: 0;
   font-size: 38px;
@@ -418,6 +444,34 @@ kbd {
 /* 已固定时，鼠标所在格给个淡描边，提示"点这里可以挪过去" */
 .qcell.cursor { outline: 1px dashed rgba(232,181,99,.85); outline-offset: -1px; }
 
+/* 联机时对手的实时预览：半透明、跟着他鼠标动 */
+.qcell.ghost {
+  background: rgba(232, 181, 99, .34);
+  background: color-mix(in srgb, var(--ghost, #e8b563) 38%, transparent);
+  outline: 1.5px dashed rgba(232, 181, 99, .9);
+  outline-offset: -1.5px;
+  animation: ghostPulse 1.5s ease-in-out infinite;
+}
+@keyframes ghostPulse {
+  0%, 100% { opacity: .55; }
+  50% { opacity: .95; }
+}
+
+/* 「只剩跳过可做」时跳出来提醒的那个按钮 */
+.btn.only-option:not(:disabled) {
+  background: linear-gradient(180deg, #e8b563, #c08a4a);
+  border-color: var(--gold);
+  color: #241a06;
+  font-weight: 700;
+  transform: scale(1.12);
+  transform-origin: right center;
+  animation: advPulse 1.3s ease-in-out infinite;
+}
+@keyframes advPulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(232, 181, 99, .20), 0 5px 14px rgba(232, 181, 99, .22); }
+  50% { box-shadow: 0 0 0 7px rgba(232, 181, 99, .13), 0 8px 24px rgba(232, 181, 99, .45); }
+}
+
 .quilt.interactive .qcell { cursor: pointer; }
 
 .pc-foot {
@@ -441,21 +495,120 @@ kbd {
   overflow: hidden;
 }
 
-.market {
+/* ---------------- 补丁环 ---------------- */
+.ring-panel {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: none;
 }
-.market-label, .tb-label {
+.ring-label, .tb-label {
   font-size: 11px;
   letter-spacing: .14em;
   color: var(--text-faint);
   margin-bottom: 9px;
 }
-.market-label { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.market-rest { letter-spacing: 0; color: #5a6379; font-size: 10.5px; }
-.market-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.ring-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 0;
+}
+.ring-rest { letter-spacing: 0; color: #5a6379; font-size: 10.5px; }
+
+/* 环本体。所有小补丁都以这里为坐标系（left/top:50% 就是圆心） */
+.ring-stage { position: relative; width: 100%; height: 194px; flex: none; }
+
+/* 环的轨道线：半径要和 app.js 里的 RING.radius(84) 对得上 */
+.ring-guide {
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 170px; height: 170px;
+  margin: -85px 0 0 -85px;
+  border-radius: 50%;
+  border: 1px dashed var(--line);
+  background: radial-gradient(circle, rgba(232,181,99,.055), transparent 70%);
+}
+
+/* 环心：还剩多少块 */
+.ring-count {
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  pointer-events: none;
+  color: var(--text-faint);
+}
+.ring-count b {
+  display: block;
+  font-size: 25px;
+  line-height: 1;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.ring-count span { font-size: 10px; letter-spacing: .12em; }
+
+.ring-far { position: absolute; inset: 0; }
+
+.ring-chip {
+  position: absolute;
+  left: 50%; top: 50%;
+  transform-origin: 50% 50%;
+  transition: transform .42s cubic-bezier(.34, .8, .3, 1), opacity .22s ease;
+  pointer-events: none;   /* 纯图形，点击交给正面的大卡片 */
+}
+.rc-grid { display: grid; }
+.rc-grid i { display: block; border-radius: 1px; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .35); }
+.rc-grid i.off { background: transparent; box-shadow: none; }
+
+/* 中立指示物：金色小药丸，永远停在正前方的逆时针一侧 */
+.ring-neutral {
+  position: absolute;
+  left: 50%; top: 50%;
+  transform-origin: 50% 50%;
+  transition: transform .42s cubic-bezier(.34, .8, .3, 1);
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--gold);
+  color: #241a06;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  white-space: nowrap;
+  box-shadow: 0 0 0 2px rgba(232, 181, 99, .18), 0 2px 6px rgba(0, 0, 0, .5);
+  pointer-events: none;
+}
+
+/* 正面三块：可点的大卡片。
+   高度必须锁死 —— 形状有大有小、还有一句「差 N 纽扣」，
+   放任它自己撑高会把整列顶出滚动条，把日志挤掉一截。 */
+.ring-front { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.ring-front .patch-card { padding: 8px; gap: 6px; }
+.ring-front .patch-shape {
+  position: relative;
+  height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ring-front .patch-grid { min-height: 0; }
+.ring-front .patch-grid .pc-cell { width: 10px; height: 10px; }
+/* 「差 N 纽扣」盖在形状上，而不是另起一行把卡片顶高 */
+.ring-front .patch-shape .patch-warn {
+  position: absolute;
+  left: 0; right: 0; top: 50%;
+  transform: translateY(-50%);
+  background: rgba(24, 16, 16, .84);
+  border-radius: 4px;
+  padding: 1px 0;
+  font-size: 10px;
+  pointer-events: none;
+}
 
 .patch-card {
   background: var(--bg-soft);
@@ -563,7 +716,7 @@ kbd {
 /* 日志 */
 .log-wrap {
   flex: 1;
-  min-height: 130px;
+  min-height: 122px;
   position: relative;
   display: flex;
 }
@@ -857,6 +1010,11 @@ kbd {
   background: #262c40;
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.3);
 }
+.cell-ghost {
+  background: rgba(232, 181, 99, .34);
+  outline: 1.5px dashed #e8b563;
+  outline-offset: -1.5px;
+}
 .lg-num { flex: none; min-width: 62px; text-align: center; font-size: 12px; font-weight: 600; }
 .lg-num.cost { color: var(--gold); }
 .lg-num.t { color: var(--blue); }
@@ -868,6 +1026,10 @@ kbd {
 @media (max-width: 1080px) {
   .center { width: 352px; }
   .patch-grid .pc-cell { width: 10px; height: 10px; }
+  .ring-stage { height: 176px; }
+  .ring-guide { width: 148px; height: 148px; margin: -74px 0 0 -74px; }
+  .ring-count b { font-size: 21px; }
+  .ring-front .patch-shape { height: 50px; }
 }
 
 @media (max-width: 860px) {

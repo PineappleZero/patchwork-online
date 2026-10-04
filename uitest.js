@@ -43,7 +43,7 @@ const CLICK_EMPTY = `
 /** 尽量买一块补丁并放下，放不下就跳过领纽扣 */
 const TRY_BUY = `
   (function(){
-    var cards = document.querySelectorAll('#marketRow .patch-card:not(.disabled)');
+    var cards = document.querySelectorAll('#ringFront .patch-card:not(.disabled)');
     if (cards.length) {
       cards[0].click();
       var q = window.__pw.myQuilt();
@@ -126,7 +126,7 @@ const HOVER_VALID = `
   await waitFor(A.ws, '__pw.state.active === __pw.seat', 8000, '轮到甲行动');
   const beforeBoard = await evaluate(A.ws, '__pw.state.players[__pw.seat].board.flat().filter(Boolean).length');
   await evaluate(A.ws,
-    "(function(){var c=document.querySelector('#marketRow .patch-card:not(.disabled)'); if(c) c.click(); return 'ok';})()");
+    "(function(){var c=document.querySelector('#ringFront .patch-card:not(.disabled)'); if(c) c.click(); return 'ok';})()");
   check('甲选中了一块补丁', await evaluate(A.ws, '!!__pw.selected'));
 
   // 新交互：选中补丁后鼠标一进板面就该有落点预览，不需要先点一下
@@ -168,6 +168,68 @@ const HOVER_VALID = `
   await waitFor(B.ws, '__pw.state.players[1-__pw.seat].board.flat().filter(Boolean).length > 0', 8000, '乙端同步看到对手落子');
   check('乙的界面同步了对手的落子', true);
 
+  console.log('\n[5b] 对手能看到我正在放哪（v1.3 实时预览）');
+  // 这段放在「乙跳过」之后才跑：它需要轮到某一方，而且不能打断上面的回合归属
+  const runGhostTest = async () => {
+  // 先把可能挂着的皮革补丁放掉，否则行动方会被卡住
+  for (let i = 0; i < 5; i += 1) {
+    const pend = await evaluate(A.ws, '__pw.state.pendingLeather.length ? __pw.state.pendingLeather[0].player : -1');
+    if (pend < 0) break;
+    await evaluate((pend === 0 ? A : B).ws, CLICK_EMPTY);
+    await waitFor(A.ws, '__pw.state.pendingLeather.length === 0', 6000, '皮革补丁已放置');
+  }
+  await waitFor(A.ws, '__pw.state.phase === "playing" && __pw.state.active !== null', 8000, '有一方能行动');
+  const actorIsA = await evaluate(A.ws, '__pw.state.active === __pw.seat');
+  const ACT = actorIsA ? A : B;    // 正在行动的那个窗口
+  const WATCH = actorIsA ? B : A;  // 旁观的那个窗口
+  const actorSeat = await evaluate(ACT.ws, '__pw.seat');
+  check('找到了行动方与旁观方', actorSeat === 0 || actorSeat === 1, 'seat=' + actorSeat);
+
+  // 行动方：临时把纽扣拉满（免得三块都买不起），选中一块并挪到一个放得下的位置
+  const picked = await evaluate(ACT.ws, `(function(){
+    var st = window.__pw.state;
+    var me = st.players[window.__pw.seat];
+    window.__btnBackup = me.buttons;
+    me.buttons = 99;
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    var cards = document.querySelectorAll('#ringFront .patch-card:not(.disabled)');
+    if (!cards.length) return 'no-card';
+    cards[0].click();
+    var q = window.__pw.myQuilt(); var c = q.children;
+    for (var i = 0; i < c.length; i++) {
+      c[i].dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+      if (q.querySelectorAll('.qcell.valid').length) { c[i].click(); return 'ok'; }
+    }
+    return 'no-spot';
+  })()`);
+  check('行动方选好了补丁和落点', picked === 'ok', picked);
+  await sleep(700);
+
+  const ghost = await evaluate(WATCH.ws, `(function(){
+    var card = document.querySelector('.player-card[data-seat="${actorSeat}"]');
+    return {
+      n: card ? card.querySelectorAll('.qcell.ghost').length : 0,
+      turn: document.getElementById('turnTag').textContent,
+      myOwn: document.querySelectorAll('.player-card[data-seat="' + __pw.seat + '"] .qcell.ghost').length,
+    };
+  })()`);
+  check('对手那块拼布板上出现了半透明预览', ghost.n > 0, JSON.stringify(ghost));
+  check('预览只画在对手自己板上，不串到我这块', ghost.myOwn === 0, '我板上 ' + ghost.myOwn + ' 格');
+  check('顶栏写着对手正在放哪一块', /正在放/.test(ghost.turn), ghost.turn);
+  await screenshot(WATCH.ws, 'v14-3-ghost.png');
+
+  // Esc 一次解除固定、再一次取消选择，预览应当消失
+  await evaluate(ACT.ws, `(function(){
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    window.__pw.state.players[__pw.seat].buttons = window.__btnBackup;
+    return 'ok';
+  })()`);
+  await sleep(700);
+  const ghostGone = await evaluate(WATCH.ws, "document.querySelectorAll('.qcell.ghost').length");
+  check('取消选择后对手那边的预览跟着消失', ghostGone === 0, '还剩 ' + ghostGone);
+  };
+
   console.log('\n[5] 轮到乙时点「跳过」领纽扣');
   await waitFor(B.ws, '__pw.state.active === __pw.seat && __pw.state.pendingLeather.length === 0', 10000, '轮到乙行动');
   const bTime = await evaluate(B.ws, '__pw.state.players[__pw.seat].time');
@@ -179,6 +241,8 @@ const HOVER_VALID = `
   check('时间令牌前进', bTime2 > bTime, bTime + ' -> ' + bTime2);
   check('前进领到了纽扣', bBtn2 > bBtn, bBtn + ' -> ' + bBtn2);
   check('甲的界面同步了乙的状态', await evaluate(A.ws, `__pw.state.players[1-__pw.seat].time === ${bTime2}`));
+
+  await runGhostTest();
 
   console.log('\n[6] 皮革补丁放置交互');
   let leatherSeen = false;

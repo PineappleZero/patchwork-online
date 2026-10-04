@@ -24,7 +24,7 @@ const CLICK_EMPTY = `
 
 const TRY_BUY = `
   (function(){
-    var cards = document.querySelectorAll('#marketRow .patch-card:not(.disabled)');
+    var cards = document.querySelectorAll('#ringFront .patch-card:not(.disabled)');
     if (cards.length) {
       cards[0].click();
       var q = window.__pw.myQuilt();
@@ -53,7 +53,7 @@ const HOVER_VALID = `
   })()
 `;
 
-const SELECT_MARKET = "(function(){var c=document.querySelectorAll('#marketRow .patch-card:not(.disabled)'); if(c.length) c[0].click(); return c.length ? 'ok' : 'none';})()";
+const SELECT_MARKET = "(function(){var c=document.querySelectorAll('#ringFront .patch-card:not(.disabled)'); if(c.length) c[0].click(); return c.length ? 'ok' : 'none';})()";
 
 (async () => {
   console.log('\n=== 中局视觉检查 ===\n');

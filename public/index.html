@@ -40,6 +40,13 @@
 
     <div class="menu-sec">
       <div class="sec-title">联机 · 2~6 人</div>
+      <div class="net-hint" id="netHint" hidden>
+        <div class="nh-label">同一个 WiFi 下，朋友打开这个地址就能跟你连上：</div>
+        <div class="nh-row">
+          <code id="netUrl">—</code>
+          <button id="btnCopyUrl" class="btn tiny">复制</button>
+        </div>
+      </div>
       <div class="inline-field">
         <span>人数</span>
         <select id="playerCount"></select>
@@ -81,11 +88,17 @@
     <!-- 所有玩家的拼布板都挂在这里，数量随人数变 -->
     <div class="players" id="playersWrap"></div>
 
-    <!-- 市场 + 时间板 + 事件纪要 -->
+    <!-- 补丁环 + 时间板 + 事件纪要 -->
     <div class="center" id="centerCol">
-      <div class="market" id="market">
-        <div class="market-label" id="marketLabel">补丁市场</div>
-        <div class="market-row" id="marketRow"></div>
+      <div class="ring-panel">
+        <div class="ring-label" id="ringLabel">补丁环</div>
+        <div class="ring-stage" id="ringStage">
+          <div class="ring-guide"></div>
+          <div class="ring-count" id="ringCount"><b>33</b><span>块待选</span></div>
+          <div class="ring-far" id="ringFar"></div>
+          <div class="ring-neutral" id="ringNeutral" title="中立指示物">中立</div>
+        </div>
+        <div class="ring-front" id="ringFront"></div>
       </div>
 
       <div class="timeboard-wrap">
@@ -167,6 +180,7 @@
         <p><b>行动 A · 跳过领纽扣</b><br>
           把时间令牌走到<b>你前面最近那位玩家</b>的前方一格，每前进 1 格就从供应堆领 1 个纽扣。
           两人局时，那位就是你的对手。如果你已经领先全场，这一步不前进也不领纽扣。</p>
+        <p class="note">如果三块补丁一块都买不起，右下角的「跳过领纽扣」会<b>放大闪动</b>提醒你 —— 这一步最容易忘。</p>
         <p><b>行动 B · 买补丁</b>（固定 5 步）<br>
           ① 从中立指示物前方 3 块里挑一块 → ② 中立指示物移到该块的位置（只前移不后退）→ ③ 付掉卡片上标的纽扣 → ④ 放到自己板上任意不重叠、不越界的位置（可旋转 / 镜像）→ ⑤ 时间令牌按卡片上的砂漏数前进。</p>
         <p class="note">补丁一旦放下就不能再移动，也不会被拿回。</p>
@@ -204,6 +218,7 @@
           <div class="lg-row"><span class="lg-swatch cell-valid"></span><span>落点预览 <b>绿框</b>：这里能放，左键点一下即可固定</span></div>
           <div class="lg-row"><span class="lg-swatch cell-invalid"></span><span>落点预览 <b>红框</b>：放不下（越界或压到已有补丁）</span></div>
           <div class="lg-row"><span class="lg-swatch cell-pin"><i></i></span><span>拼布板上的小圆点：这块补丁提供的纽扣收益，几个点就是每次经过纽扣格收几个</span></div>
+          <div class="lg-row"><span class="lg-swatch cell-ghost"></span><span><b>半透明预览</b>：联机时对手正在考虑放下的补丁，会实时出现在他的板上</span></div>
         </div>
         <div class="legend legend-card">
           <div class="lg-title">补丁卡片上的三个数字</div>
@@ -219,8 +234,15 @@
       </div>
 
       <div class="rules-sec">
+        <h3>补丁环（中间那圈转盘）</h3>
+        <p>33 块补丁沿环摆放，<b>每局重新洗牌，位置都不一样</b>。金色的<b>中立指示物</b>永远停在正前方，它前面那 3 块就是你现在能买的 —— 也就是环下方放大显示的那三张卡片。</p>
+        <p>买走一块，指示物就前移一格、整圈跟着转（<b>只前移不后退</b>）。环上越靠后的补丁画得越小，那只是远近的视觉提示。</p>
+      </div>
+
+      <div class="rules-sec">
         <h3>怎么操作</h3>
-        <p>点市场卡片选补丁 → 鼠标在<b>自己（或当前行动方）的拼布板</b>上移动，落点实时预览（绿＝可放，红＝不可），<b>补丁会盖住鼠标停的那一格</b> → <b>左键点一下</b>固定位置（固定后预览不再跟手，可以放心去点按钮）→ 点右下角<b>确认放置</b>。</p>
+        <p>点环下方那三张卡片选补丁 → 鼠标在<b>自己（或当前行动方）的拼布板</b>上移动，落点实时预览（绿＝可放，红＝不可），<b>补丁会盖住鼠标停的那一格</b> → <b>左键点一下</b>固定位置（固定后预览不再跟手，可以放心去点按钮）→ 点右下角<b>确认放置</b>。</p>
+        <p>联机时，你的鼠标一动，对手那边的拼布板上就会出现一块半透明预览，他看得见你在琢磨什么；反过来也一样。</p>
         <p class="note">右键或 <kbd>Esc</kbd>：解除固定 ／ <kbd>R</kbd> 旋转 ／ <kbd>F</kbd> 镜像 ／ <kbd>空格</kbd> 跳过领纽扣 ／ <kbd>Enter</kbd> 确认放置</p>
       </div>
 

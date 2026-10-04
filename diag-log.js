@@ -1,7 +1,10 @@
 'use strict';
 /*
- * 诊断：事件纪要（日志）到底有没有自动跟随滚动 + 再来一局为什么失效。
+ * 诊断：事件纪要（日志）到底有没有自动跟随滚动 + 「再来一局」真的能开新局吗。
  * 用法：先启动服务端（node server/index.js），再运行 node diag-log.js
+ *
+ * 注意：页面里读局面一律走 window.__pw 这个只读桥 ——
+ * 顶层的 const S 虽然能从别处求值里看见，但它依赖脚本执行顺序，不牢靠。
  */
 const { launchEdge, evaluate, waitFor, sleep, PORT } = require('./browserkit');
 
@@ -19,15 +22,44 @@ const LOGSTAT = `JSON.stringify((function(){
   };
 })())`;
 
+/** 读当前局面：谁该动、有没有待放皮革 */
+const SNAP = `JSON.stringify((function(){
+  var s = window.__pw.state;
+  return {
+    over: s.phase === 'over',
+    act: s.active,
+    pend: s.pendingLeather.length ? s.pendingLeather[0].player : -1
+  };
+})())`;
+
+/** 一步：能买就买（随便找个放得下的位置），否则跳过 */
+const STEP = `(function(){
+  if (window.__pw.state.pendingLeather.length) {
+    var q = window.__pw.myQuilt().children;
+    for (var j = 0; j < q.length; j++) { if (!q[j].classList.contains('filled')) { q[j].click(); return 'leather'; } }
+  }
+  var cards = document.querySelectorAll('#ringFront .patch-card:not(.disabled)');
+  if (cards.length) {
+    cards[Math.floor(Math.random() * cards.length)].click();
+    var c = window.__pw.myQuilt().children;
+    for (var i = 0; i < c.length; i++) {
+      c[i].click();
+      if (window.__pw.locked) { document.getElementById('btnConfirm').click(); return 'patch'; }
+    }
+  }
+  document.getElementById('btnAdvance').click();
+  return 'advance';
+})()`;
+
 (async () => {
   const A = await launchEdge(9230, `http://127.0.0.1:${PORT}/`, 'la');
   const B = await launchEdge(9231, `http://127.0.0.1:${PORT}/`, 'lb');
-  await waitFor(A.ws, "typeof S !== 'undefined' && S.meta !== null", 10000, '甲加载');
-  await waitFor(B.ws, "typeof S !== 'undefined' && S.meta !== null", 10000, '乙加载');
+  await waitFor(A.ws, '!!(window.__pw && window.__pw.meta)', 10000, '甲加载');
+  await waitFor(B.ws, '!!(window.__pw && window.__pw.meta)', 10000, '乙加载');
   await evaluate(A.ws, "document.getElementById('playerName').value='阿杭'; document.getElementById('btnCreate').click(); 'ok'");
-  const room = await waitFor(A.ws, 'S.room', 8000, '房间码');
+  const room = await waitFor(A.ws, 'window.__pw.room', 8000, '房间码');
   await evaluate(B.ws, `document.getElementById('playerName').value='老王'; document.getElementById('roomCode').value='${room}'; document.getElementById('btnJoin').click(); 'ok'`);
-  await waitFor(A.ws, 'S.state && S.state.started', 8000, '开局');
+  await waitFor(A.ws, "window.__pw.state && window.__pw.state.phase === 'playing'", 8000, '开局');
   await sleep(300);
 
   console.log('\n--- 1) 纯 pushLog 压力测试（50 条）---');
@@ -36,18 +68,11 @@ const LOGSTAT = `JSON.stringify((function(){
 
   console.log('\n--- 2) 真实对局：每步后的日志滚动状态 ---');
   for (let step = 0; step < 14; step += 1) {
-    const info = JSON.parse(await evaluate(A.ws, `JSON.stringify({
-      over: S.state.phase === 'over', act: S.state.active,
-      pend: S.state.pendingLeather.length ? S.state.pendingLeather[0].player : -1
-    })`));
+    const info = JSON.parse(await evaluate(A.ws, SNAP));
     if (info.over) break;
     const seat = info.pend >= 0 ? info.pend : info.act;
     const w = seat === 0 ? A : B;
-    if (info.pend >= 0) {
-      await evaluate(w.ws, "(function(){var c=document.getElementById('meQuilt').children; for(var i=0;i<c.length;i++){ if(!c[i].classList.contains('filled')){ c[i].click(); return 'ok'; } } return 'no';})()");
-    } else {
-      await evaluate(w.ws, "document.getElementById('btnAdvance').click(); 'ok'");
-    }
+    await evaluate(w.ws, STEP);
     await sleep(90);
     if (step % 4 === 3) console.log('   step' + step + ' ' + await evaluate(A.ws, LOGSTAT));
   }
@@ -64,42 +89,26 @@ const LOGSTAT = `JSON.stringify((function(){
 
   console.log('\n--- 4) 打到终局，测「再来一局」---');
   for (let i = 0; i < 500; i += 1) {
-    const info = JSON.parse(await evaluate(A.ws, `JSON.stringify({
-      over: S.state.phase === 'over', act: S.state.active,
-      pend: S.state.pendingLeather.length ? S.state.pendingLeather[0].player : -1,
-      acts: (function(){ var a = engineActionsForTest ? [] : null; return null; })()
-    })`));
+    const info = JSON.parse(await evaluate(A.ws, SNAP));
     if (info.over) break;
     const seat = info.pend >= 0 ? info.pend : info.act;
-    const w = seat === 0 ? A : B;
-    const r = await evaluate(w.ws, `(function(){
-      var cards = document.querySelectorAll('#marketRow .patch-card:not(.disabled)');
-      if (cards.length) {
-        cards[0].click();
-        var c = document.getElementById('meQuilt').children;
-        for (var i = 0; i < c.length; i++) { c[i].click(); if (S.locked) { document.getElementById('btnConfirm').click(); return 'patch'; } }
-      }
-      if (S.leatherMode) {
-        var q = document.getElementById('meQuilt').children;
-        for (var j = 0; j < q.length; j++) { if (!q[j].classList.contains('filled')) { q[j].click(); return 'leather'; } }
-      }
-      document.getElementById('btnAdvance').click();
-      return 'advance';
-    })()`);
+    await evaluate((seat === 0 ? A : B).ws, STEP);
     await sleep(35);
   }
-  console.log('   phase=' + await evaluate(A.ws, 'S.state.phase'));
+  console.log('   phase=' + await evaluate(A.ws, 'window.__pw.state.phase'));
   console.log('   结算弹层可见=' + await evaluate(A.ws, "document.getElementById('overlay').classList.contains('show')"));
 
-  const beforeState = await evaluate(A.ws, "JSON.stringify({room:S.room, phase:S.state.phase, t:S.state.players.map(function(p){return p.time;})})");
+  const beforeState = await evaluate(A.ws,
+    "JSON.stringify({room:window.__pw.room, phase:window.__pw.state.phase, t:window.__pw.state.players.map(function(p){return p.time;})})");
   console.log('   点「再来一局」前：' + beforeState);
   await evaluate(A.ws, "document.getElementById('btnRematch').click(); 'ok'");
   await evaluate(B.ws, "document.getElementById('btnRematch').click(); 'ok'");
   await sleep(900);
   console.log('   双方都点之后：' + await evaluate(A.ws,
-    "JSON.stringify({phase:S.state.phase, t:S.state.players.map(function(p){return p.time;}), placed:S.state.players.map(function(p){return p.placed.length;})})"));
-  console.log('   A 端 phase=' + await evaluate(A.ws, 'S.state.phase') + '  B 端 phase=' + await evaluate(B.ws, 'S.state.phase'));
-  console.log('   服务端房间票数（若有）=' + await evaluate(A.ws, "document.getElementById('overlay').classList.contains('show')"));
+    "JSON.stringify({phase:window.__pw.state.phase, t:window.__pw.state.players.map(function(p){return p.time;}), placed:window.__pw.state.players.map(function(p){return p.placed.length;})})"));
+  console.log('   A 端 phase=' + await evaluate(A.ws, 'window.__pw.state.phase') +
+    '  B 端 phase=' + await evaluate(B.ws, 'window.__pw.state.phase'));
+  console.log('   结算弹层还开着吗=' + await evaluate(A.ws, "document.getElementById('overlay').classList.contains('show')"));
 
   A.ws.close(); B.ws.close();
   A.proc.kill(); B.proc.kill();

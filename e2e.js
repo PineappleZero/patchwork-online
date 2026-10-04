@@ -331,6 +331,12 @@ function chooseLeatherSpot(board) {
     await sleep(140);
     solo = lastState(s1);
   }
+  // 电脑思考有 750ms 延迟，上面那个循环可能正好停在它思考的中途。
+  // 等一下让回合交回人类，否则「轮次归属」这条会随机翻车。
+  for (let i = 0; i < 20 && solo.phase !== 'over' && solo.active !== 0; i += 1) {
+    await sleep(220);
+    solo = lastState(s1);
+  }
   check('电脑在没有人类干预时也会自己行动', solo.players[1].placed.length + solo.players[1].time > 0,
     'time=' + solo.players[1].time + ' placed=' + solo.players[1].placed.length);
   check('对面电脑确实在买补丁', solo.players[1].placed.length >= 1,
@@ -433,9 +439,53 @@ function chooseLeatherSpot(board) {
   const outsiderErr = await outsider.wait((m) => m.type === 'error');
   check('单机房间拒绝他人加入', /单机/.test(outsiderErr.message), outsiderErr.message);
 
+  console.log('\n[11] 联机实时预览：对手能看见我在放哪（v1.3）');
+  const d1 = await wsClient('预览甲');
+  const d2 = await wsClient('预览乙');
+  d1.send({ type: 'create', name: '甲', mode: 'online', capacity: 2 });
+  const dj = await d1.wait((m) => m.type === 'joined');
+  d2.send({ type: 'join', name: '乙', room: dj.room });
+  await d2.wait((m) => m.type === 'joined');
+  const dst = await d1.wait((m) => m.type === 'state' && m.started);
+  const actor = dst.active === 0 ? d1 : d2;
+  const watcher = dst.active === 0 ? d2 : d1;
+  const pick = dst.visible[0];
+
+  actor.send({ type: 'cursor', patchId: pick, oriIndex: 0, row: 3, col: 4 });
+  const cur = await watcher.wait((m) => m.type === 'cursor');
+  check('对手收到了实时预览',
+    cur.seat === dst.active && cur.patchId === pick, JSON.stringify(cur));
+  check('预览带着朝向与落点（对手能画在同一格）',
+    cur.oriIndex === 0 && cur.row === 3 && cur.col === 4, JSON.stringify(cur));
+
+  await sleep(250);
+  check('预览只点对点转发，发起方自己收不到',
+    actor.messages.filter((m) => m.type === 'cursor').length === 0,
+    '收到 ' + actor.messages.filter((m) => m.type === 'cursor').length + ' 条');
+  // 关键：预览绝不能混进 state 广播里（否则每 70ms 就会让所有人整屏重绘）
+  const stMsgs = watcher.messages.filter((m) => m.type === 'state');
+  check('预览没有搭上 state 广播（不触发整屏重绘）',
+    stMsgs.every((m) => m.cursors === undefined), 'state 条数 ' + stMsgs.length);
+
+  actor.send({ type: 'cursor', patchId: null });
+  const clr = await watcher.wait((m) => m.type === 'cursor' && m.patchId === null);
+  check('取消选择会通知对手擦掉预览', clr.patchId === null);
+
+  // 落子之后服务端必须主动擦掉，否则对手屏幕上会僵着一块假的
+  actor.send({ type: 'cursor', patchId: pick, oriIndex: 0, row: 5, col: 5 });
+  await watcher.wait((m) => m.type === 'cursor' && m.patchId === pick);
+  watcher.messages.length = 0;
+  actor.send(chooseAction(dst, dst.active));
+  let afterAct = null;
+  try {
+    afterAct = await watcher.wait((m) => m.type === 'cursor' && m.patchId === null, 5000);
+  } catch (e) { afterAct = null; }
+  check('动作落定后服务端主动擦掉预览', Boolean(afterAct));
+
   c1.close(); c2.close(); c3.close();
   s1.close(); t1.close(); t2.close(); t3.close();
   u1.close(); u2.close(); l1.close(); outsider.close();
+  d1.close(); d2.close();
 
   console.log('\n----------------------------------------');
   console.log('通过 ' + pass + ' 项，失败 ' + fail + ' 项');
