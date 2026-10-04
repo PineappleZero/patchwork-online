@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>拼布 Patchwork · 单机与联机</title>
+<!-- 空 favicon：不写这一行浏览器会去请求 /favicon.ico，控制台里就多一条 404。
+     写成 data: 既不用多一个文件，也顺手省掉一次请求。 -->
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -11,53 +14,87 @@
 <!-- ============ 主菜单 ============ -->
 <section id="menu" class="screen active">
   <div class="menu-card">
-    <h1 class="title">拼布</h1>
-    <p class="subtitle">Patchwork · 单机与联机</p>
-
-    <label class="field">
-      <span>你的名字</span>
-      <input id="playerName" type="text" maxlength="12" placeholder="随便起个名" autocomplete="off">
-    </label>
-
-    <div class="menu-sec">
-      <div class="sec-title">单机 · 不用等人，点开就玩</div>
-      <button id="btnSolo" class="mode-card">
-        <b>人机对战</b>
-        <small>和 wzzzhhhhh 下一局</small>
-      </button>
-      <button id="btnLocal" class="mode-card">
-        <b>同机双人</b>
-        <small>一台设备，两人轮流操作</small>
-      </button>
-      <div class="inline-field">
-        <span>电脑难度</span>
-        <select id="botLevel">
-          <option value="normal">普通</option>
-          <option value="easy">轻松</option>
-        </select>
-      </div>
+    <div class="brand">
+      <h1 class="title" data-text="拼布">拼布</h1>
+      <p class="subtitle">Patchwork · 单机与联机</p>
     </div>
 
-    <div class="menu-sec">
-      <div class="sec-title">联机 · 2~6 人</div>
-      <div class="net-hint" id="netHint" hidden>
-        <div class="nh-label">同一个 WiFi 下，朋友打开这个地址就能跟你连上：</div>
-        <div class="nh-row">
-          <code id="netUrl">—</code>
-          <button id="btnCopyUrl" class="btn tiny">复制</button>
+    <div class="menu-top">
+      <label class="field">
+        <span>你的名字</span>
+        <input id="playerName" type="text" maxlength="12" placeholder="随便起个名" autocomplete="off">
+      </label>
+      <button type="button" id="btnSfxMenu" class="sfx-btn" data-sfx-toggle aria-pressed="true"
+              title="音效已开 · 点一下静音">
+        <span class="sfx-ico" aria-hidden="true">♪</span><span class="sfx-txt">音效开</span>
+      </button>
+    </div>
+
+    <!-- 单机与联机左右并排；每块里经典版在上、魔改版在下，用一条小分隔带隔开 -->
+    <div class="menu-grid">
+
+      <div class="menu-sec">
+        <div class="sec-title">单机 · 不用等人，点开就玩</div>
+        <button id="btnSolo" class="mode-card" data-mode="solo" data-variant="classic">
+          <b>人机对战</b>
+          <small>经典规则，和 wzzzhhhhh 下一局</small>
+        </button>
+        <button id="btnLocal" class="mode-card" data-mode="local" data-variant="classic">
+          <b>同机双人</b>
+          <small>一台设备，两人轮流操作</small>
+        </button>
+        <div class="inline-field">
+          <span>电脑难度</span>
+          <select id="botLevel">
+            <option value="normal">普通</option>
+            <option value="easy">轻松</option>
+          </select>
         </div>
+
+        <div class="variant-head"><span class="vh-tag">魔改版</span><span class="vh-sub">混沌拼布</span></div>
+        <div class="variant-row">
+          <button class="mode-card chaos" data-mode="solo" data-variant="chaos">
+            <b>人机对战</b><small>挑战 wzzzhhhhh</small>
+          </button>
+          <button class="mode-card chaos" data-mode="local" data-variant="chaos">
+            <b>同机双人</b><small>两人轮流</small>
+          </button>
+        </div>
+        <p class="variant-hint" data-chaos-hint>混沌拼布的规则见「规则与图例」</p>
       </div>
-      <div class="inline-field">
-        <span>人数</span>
-        <select id="playerCount"></select>
-        <button id="btnCreate" class="btn primary">创建房间</button>
+
+      <div class="menu-sec">
+        <div class="sec-title">联机 · 2~6 人</div>
+        <div class="net-hint" id="netHint" hidden>
+          <div class="nh-label">同一个 WiFi 下，朋友打开这个地址就能跟你连上：</div>
+          <div class="nh-row">
+            <code id="netUrl">—</code>
+            <button id="btnCopyUrl" class="btn tiny">复制</button>
+          </div>
+        </div>
+        <div class="inline-field">
+          <span>人数</span>
+          <select id="playerCount"></select>
+        </div>
+        <button id="btnCreate" class="mode-card" data-mode="online" data-variant="classic">
+          <b>创建房间 · 经典版</b>
+          <small>原版规则，坐满自动开局</small>
+        </button>
+        <div class="inline-field">
+          <span>房间码</span>
+          <input id="roomCode" type="text" maxlength="4" placeholder="4 位" autocomplete="off"
+                 style="text-transform:uppercase;letter-spacing:.28em">
+          <button id="btnJoin" class="btn">加入房间</button>
+        </div>
+
+        <div class="variant-head"><span class="vh-tag">魔改版</span><span class="vh-sub">混沌拼布</span></div>
+        <button class="mode-card chaos" data-mode="online" data-variant="chaos">
+          <b>创建房间 · 魔改版</b>
+          <small>0 纽扣起步，混沌格随机发牌</small>
+        </button>
+        <p class="variant-hint">加入别人的房间时，规则跟着房主走。</p>
       </div>
-      <div class="inline-field">
-        <span>房间码</span>
-        <input id="roomCode" type="text" maxlength="4" placeholder="4 位" autocomplete="off"
-               style="text-transform:uppercase;letter-spacing:.28em">
-        <button id="btnJoin" class="btn">加入房间</button>
-      </div>
+
     </div>
 
     <p id="menuMsg" class="msg"></p>
@@ -80,6 +117,10 @@
     <div class="topbar-actions">
       <button id="btnRules" class="btn tiny">规则</button>
       <button id="btnCopy" class="btn tiny">复制邀请</button>
+      <button type="button" id="btnSfxGame" class="sfx-btn compact" data-sfx-toggle
+              aria-pressed="true" title="音效已开 · 点一下静音">
+        <span class="sfx-ico" aria-hidden="true">♪</span><span class="sfx-txt">音效开</span>
+      </button>
     </div>
   </header>
 
@@ -115,7 +156,7 @@
             <div class="timeboard" id="timeboard"></div>
           </div>
           <div class="ring-far" id="ringFar"></div>
-          <div class="ring-neutral" id="ringNeutral" title="中立指示物">中立</div>
+          <div class="ring-neutral" id="ringNeutral" title="中立棋子" aria-label="中立棋子"></div>
         </div>
         <div class="ring-front" id="ringFront"></div>
       </div>
@@ -181,6 +222,22 @@
         <p>把补丁缝到自己的 9×9 拼布板上，尽量填满、尽量多剩纽扣。</p>
         <p class="formula">最终得分 ＝ 剩余纽扣 ＋ 7×7 奖励 － 空格数 × 2</p>
         <p>负分是正常的。得分最高者获胜；<b>同分时，先抵达终点的人获胜</b>。</p>
+        <p class="note"><b>魔改版</b>把这条公式改成了 <b>＋14 奖励 － 空格数 × 3</b>，其余部分一致。</p>
+      </div>
+
+      <div class="rules-sec">
+        <h3>魔改版 · 混沌拼布</h3>
+        <p>主菜单下半部分那个入口。补丁的形状和数值一个没改，改的是<b>规则参数</b>和<b>时间板上多出来的一件事</b>，玩起来完全是另一种节奏：</p>
+        <div class="legend legend-card">
+          <div class="lg-row"><span class="lg-num">0 纽扣</span><span>开局手上一个纽扣都没有，第一手只能先跳过挣点本钱</span></div>
+          <div class="lg-row"><span class="lg-num">4 选 1</span><span>中立棋子前方能看到 <b>4 块</b>补丁，可选面更宽</span></div>
+          <div class="lg-row"><span class="lg-num">26 块</span><span>每局只从 33 块里随机抽 26 块进环，环更短、转得更快，几局之间长得都不一样</span></div>
+          <div class="lg-row"><span class="lg-num">+14</span><span>7×7 奖励翻倍</span></div>
+          <div class="lg-row"><span class="lg-num">×3</span><span>每空一格罚 3 分，摆烂的代价更贵</span></div>
+        </div>
+        <p><b>混沌格</b>：时间板上多出 3 个紫色格子（第 <b>12 / 30 / 48</b> 格），经过或停在上面都会随机触发一件事 ——</p>
+        <p class="formula" id="chaosEventHint">天赐 · 苛捐 · 命运交换 · 时间跃迁</p>
+        <p class="note">埋的是什么在开局就抽好了，踩上去才揭晓。<b>苛捐</b>纽扣不够时只扣到 0 为止，永远不会变成负数；<b>时间跃迁</b>额外走的那两格不再触发混沌格，但途中的纽扣格照收。</p>
       </div>
 
       <div class="rules-sec">
@@ -194,9 +251,9 @@
         <p><b>行动 A · 跳过领纽扣</b><br>
           把时间令牌走到<b>你前面最近那位玩家</b>的前方一格，每前进 1 格就从供应堆领 1 个纽扣。
           两人局时，那位就是你的对手。如果你已经领先全场，这一步不前进也不领纽扣。</p>
-        <p class="note">如果三块补丁一块都买不起，右下角的「跳过领纽扣」会<b>放大闪动</b>提醒你 —— 这一步最容易忘。</p>
+        <p class="note">如果眼前那几块补丁一块都买不起，右下角的「跳过领纽扣」会<b>放大闪动</b>提醒你 —— 这一步最容易忘。</p>
         <p><b>行动 B · 买补丁</b>（固定 5 步）<br>
-          ① 从中立指示物前方 3 块里挑一块 → ② 中立指示物移到该块的位置（只前移不后退）→ ③ 付掉卡片上标的纽扣 → ④ 放到自己板上任意不重叠、不越界的位置（可旋转 / 镜像）→ ⑤ 时间令牌按卡片上的砂漏数前进。</p>
+          ① 从中立棋子前方那几块里挑一块（经典 3 块 / 魔改 4 块）→ ② 棋子移到该块的位置（只前移不后退）→ ③ 付掉卡片上标的纽扣 → ④ 放到自己板上任意不重叠、不越界的位置（可旋转 / 镜像）→ ⑤ 时间令牌按卡片上的砂漏数前进。</p>
         <p class="note">补丁一旦放下就不能再移动，也不会被拿回。</p>
       </div>
 
@@ -249,16 +306,17 @@
 
       <div class="rules-sec">
         <h3>补丁环 · 两种环绕方式</h3>
-        <p>33 块补丁沿外圈摆放，<b>每局重新洗牌，位置都不一样</b>。金色的<b>中立指示物</b>永远停在正前方那格的逆时针一侧，它顺时针方向前面那 3 块就是你现在能买的。</p>
-        <p>买走一块，指示物就前移一格、整圈跟着转（<b>只前移不后退</b>）。</p>
-        <p><b>① 环绕时间板（默认）</b>：环是个圆，圆心就是时间板本身（9 列 × 6 行，正好 54 格），像实物那样「环在外、盘在内」。环上越靠后的补丁画得越小，那只是远近的视觉提示。</p>
-        <p><b>② 绕拼布板（只在双人局有）</b>：环从圆变成贴着两块拼布板的<b>圆角矩形</b>，补丁沿着四条边等距摊开、<b>全部正着放、一样大小</b>，所以每一块都看得清清楚楚。要在双人局里改，点棋盘标题右边那个「环绕时间板 / 绕拼布板」开关即可（每个人的选择只影响自己这块屏幕）。</p>
-        <p class="note">不管是圆还是圆角矩形，<b>你现在能买的那 3 块都会被金色描边标出来、还可以直接点它们选补丁</b>；买不起的只画一圈细虚线。</p>
+        <p>33 块补丁沿外圈摆放，<b>每局重新洗牌，位置都不一样</b>；魔改版则是从 33 块里抽 26 块。金色的<b>中立棋子</b>永远停在正前方那格的逆时针一侧，它顺时针方向前面那几块（经典 3 块 / 魔改 4 块）就是你现在能买的。</p>
+        <p>买走一块，棋子就前移一格、整圈跟着转（<b>只前移不后退</b>）。</p>
+        <p><b>① 绕拼布板（双人局默认）</b>：环从圆变成贴着两块拼布板的<b>圆角矩形</b>，补丁沿着四条边等距摊开、<b>全部正着放、一样大小</b>，格子比圆环上大一档，所以每一块都看得清清楚楚。中立棋子停在<b>上方那条轨道</b>上，紧挨着第一块可选补丁。</p>
+        <p><b>② 环绕时间板</b>：环是个圆，圆心就是时间板本身（9 列 × 6 行，正好 54 格），像实物那样「环在外、盘在内」。环上越靠后的补丁画得越小，那只是远近的视觉提示。</p>
+        <p>要在双人局里换回来，点棋盘标题右边那个「环绕时间板 / 绕拼布板」开关即可（每个人的选择只影响自己这块屏幕，还会记在本地下次接着用）。三人以上的局没有开关 —— 拼布板不止两块，圆角矩形框不住，自动用圆环。</p>
+        <p class="note">不管是圆还是圆角矩形，<b>你现在能买的那几块都会被金色描边标出来、还可以直接点它们选补丁</b>；买不起的只画一圈细虚线。</p>
       </div>
 
       <div class="rules-sec">
         <h3>怎么操作</h3>
-        <p>点环下方那三张卡片选补丁，<b>或者直接点环上／框上带金色描边的那几块</b> → 鼠标在<b>自己（或当前行动方）的拼布板</b>上移动，落点实时预览（绿＝可放，红＝不可），<b>补丁会盖住鼠标停的那一格</b> → <b>左键点一下</b>固定位置（固定后预览不再跟手，可以放心去点按钮）→ 点右下角<b>确认放置</b>。</p>
+        <p>点环下方那几张卡片选补丁，<b>或者直接点环上／框上带金色描边的那几块</b> → 鼠标在<b>自己（或当前行动方）的拼布板</b>上移动，落点实时预览（绿＝可放，红＝不可），<b>补丁会盖住鼠标停的那一格</b> → <b>左键点一下</b>固定位置（固定后预览不再跟手，可以放心去点按钮）→ 点右下角<b>确认放置</b>。</p>
         <p>联机时，你的鼠标一动，对手那边的拼布板上就会出现一块半透明预览，他看得见你在琢磨什么；反过来也一样。</p>
         <p class="note">右键或 <kbd>Esc</kbd>：解除固定 ／ <kbd>R</kbd> 旋转 ／ <kbd>F</kbd> 镜像 ／ <kbd>空格</kbd> 跳过领纽扣 ／ <kbd>Enter</kbd> 确认放置</p>
       </div>

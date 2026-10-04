@@ -6,10 +6,10 @@ const {
   TIME_BOARD,
   BOARD_SIZE,
   LAST_SPACE,
-  SEVEN_BY_SEVEN_BONUS,
-  START_BUTTONS,
-  EMPTY_PENALTY,
   MARKET_VISIBLE,
+  VARIANTS,
+  DEFAULT_VARIANT,
+  CHAOS_EVENTS,
 } = require('./data');
 
 const PATCH_BY_ID = new Map(PATCHES.map((p) => [p.id, p]));
@@ -33,17 +33,24 @@ function shuffle(list, rng = Math.random) {
  * 数据模型：circle[neutral] 就是中立指示物顺时针方向的第一块，可见的三块即
  * circle[neutral..neutral+2]。
  */
-function buildCircle(rng) {
-  const rest = shuffle(PATCHES.filter((p) => p.id !== 'A').map((p) => p.id), rng);
-  return [...rest, 'A'];
+function buildCircle(rng, poolSize) {
+  const rest = PATCHES.filter((p) => p.id !== 'A').map((p) => p.id);
+  const shuffled = shuffle(rest, rng);
+  // 魔改版只抽一部分进环（poolSize 为 null / 越界时照原版用满 33 块）。
+  // 抽签必须在同一次 shuffle 上做，否则「每局都不一样」这件事就没了。
+  const pool = (Number.isInteger(poolSize) && poolSize > 1 && poolSize <= PATCHES.length)
+    ? shuffled.slice(0, poolSize - 1)
+    : shuffled;
+  return [...pool, 'A'];
 }
 
-function createPlayer(name, index, isBot) {
+function createPlayer(name, index, isBot, rules) {
+  const r = rules || DEFAULT_VARIANT;
   return {
     index,
     name: name || `玩家${index + 1}`,
     bot: Boolean(isBot),
-    buttons: START_BUTTONS,
+    buttons: r.startButtons,
     time: 0,
     /** 拼布板：每格记录 complement / 补丁 id / 该补丁的朝向索引 */
     board: Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(null)),
@@ -125,11 +132,12 @@ function emptySpaces(grid) {
   return n;
 }
 
-/** 中立指示物前方的 3 块可选补丁 */
+/** 中立指示物前方的可选补丁（经典 3 块 / 魔改 4 块，读的是局面自带的 rules） */
 function visiblePatchIds(state) {
   const n = state.circle.length;
+  const limit = (state.rules && state.rules.marketVisible) || MARKET_VISIBLE;
   const ids = [];
-  for (let i = 0; i < MARKET_VISIBLE && i < n; i += 1) {
+  for (let i = 0; i < limit && i < n; i += 1) {
     ids.push(state.circle[(state.neutral + i) % n]);
   }
   return ids;
@@ -170,10 +178,84 @@ function isGameOver(state) {
   return state.players.every((p) => p.finished);
 }
 
+/** 混沌事件的四种花样。开局时按这个顺序洗牌，好让一局里三格各不相同。 */
+const CHAOS_KINDS = ['bonus', 'toll', 'swap', 'leap'];
+
+/**
+ * 踩到混沌格时抽到的那个事件，在这里真正结算。
+ * 返回事件数组（第一条是混沌本身，跃迁还会在后面补上途中收到的纽扣）。
+ *
+ * 四个花样：
+ *   bonus 天赐    白拿 CHAOS_EVENTS.bonus 个纽扣
+ *   toll  苛捐    最多扣 CHAOS_EVENTS.toll 个（扣光为止，不会变负）
+ *   swap  命运交换 和纽扣最多的那位对手对调口袋
+ *   leap  跃迁    额外前进 CHAOS_EVENTS.leap 格，途中的纽扣格照常结算
+ *
+ * 跃迁刻意**只结算纽扣格、不再触发混沌格**，否则连环触发能绕成死循环。
+ */
+function applyChaos(state, player, plan) {
+  const main = { type: 'chaos', space: plan.space, kind: plan.kind, player: player.index };
+
+  if (plan.kind === 'bonus') {
+    player.buttons += CHAOS_EVENTS.bonus;
+    main.gained = CHAOS_EVENTS.bonus;
+    return [main];
+  }
+
+  if (plan.kind === 'toll') {
+    const paid = Math.min(player.buttons, CHAOS_EVENTS.toll);
+    player.buttons -= paid;
+    main.paid = paid;
+    return [main];
+  }
+
+  if (plan.kind === 'swap') {
+    let best = -1;
+    for (const p of state.players) {
+      if (p.index === player.index) continue;
+      if (best < 0 || p.buttons > state.players[best].buttons) best = p.index;
+    }
+    if (best < 0) { main.with = null; return [main]; }
+    const other = state.players[best];
+    const mine = player.buttons;
+    player.buttons = other.buttons;
+    other.buttons = mine;
+    main.with = best;
+    main.mine = player.buttons;
+    main.theirs = other.buttons;
+    return [main];
+  }
+
+  // leap：自己往前推两格。外层循环只跑到原来的终点，所以这里要自己把
+  // 新跨过的纽扣格补上，不然这两格就白走了。
+  const from = player.time;
+  const to = Math.min(from + CHAOS_EVENTS.leap, LAST_SPACE);
+  player.time = to;
+  const extra = [];
+  for (let s = from + 1; s <= to; s += 1) {
+    if (TIME_BOARD[s] === 'income') {
+      player.buttons += player.incomeIcons;
+      extra.push({ type: 'income', space: s, gained: player.incomeIcons, player: player.index });
+    }
+  }
+  main.advanced = to - from;
+  return [main].concat(extra);
+}
+
 /** 结算时间板事件：从 from 前进到 to（含 to），返回事件列表 */
 function resolveTimeEvents(state, player, from, to) {
   const events = [];
+  const chaosSet = state.chaosSet;
   for (let space = from + 1; space <= to; space += 1) {
+    // 混沌格优先判：它不在 TIME_BOARD 表里（表是原版数据，不能动），
+    // 所以拿局面自带的 chaosSet 查。每位玩家各触发各的，没有「已被踩过」这回事。
+    if (chaosSet && chaosSet.has(space)) {
+      const plan = state.chaosPlan.find((x) => x.space === space);
+      if (plan) {
+        applyChaos(state, player, plan).forEach((e) => events.push(e));
+        continue;
+      }
+    }
     const kind = TIME_BOARD[space];
     if (kind === 'income') {
       player.buttons += player.incomeIcons;
@@ -302,16 +384,35 @@ function buyPatch(state, playerIndex, patchId, oriIndex, row, col) {
 /**
  * 开一局。players 可以是 ['甲','乙'] 这样的名字数组，
  * 也可以是 [{ name, bot }] —— 多人局和人机局都走这一条。
+ *
+ * options.variant 选规则变体（'classic' | 'chaos'，缺省经典）。
+ * 选定后整套数值都拷进 state.rules —— 引擎后面只看 state.rules，
+ * 再也不用回 data.js 取常量，这样同一进程里两种变体可以并存。
  */
-function createGame(players, rng = Math.random) {
+function createGame(players, rng = Math.random, options = {}) {
+  const rules = Object.assign({}, VARIANTS[options.variant] || DEFAULT_VARIANT);
   const raw = (players && players.length ? players : ['玩家一', '玩家二']);
   const list = raw.map((p) => (typeof p === 'string' ? { name: p } : (p || {})));
+
+  // 混沌格的事件在开局就抽好、存进局面：
+  //   · 服务端结算时不用再摇色子，同一局重放得到同一结果，测试才写得出来；
+  //   · 关键信息直到踩上去那一刻才写进 lastEvents，玩家看不见「前面埋了什么」。
+  const kinds = shuffle(CHAOS_KINDS, rng);
+  const chaosPlan = rules.chaosSpaces.map((space, i) => ({
+    space,
+    kind: kinds[i % kinds.length],
+  }));
+
   const state = {
-    circle: buildCircle(rng),
+    variant: rules.key,
+    rules,
+    circle: buildCircle(rng, rules.poolSize),
     neutral: 0, // 中立指示物夹在 circle[length-1] 与 circle[0] 之间；可见的是 0,1,2
-    players: list.map((p, i) => createPlayer(p.name, i, p.bot)),
+    players: list.map((p, i) => createPlayer(p.name, i, p.bot, rules)),
     leatherClaimed: TIME_BOARD.map((k) => k !== 'leather'),
     pendingLeather: [], // 已获得但还没选落点的 1x1 皮革补丁
+    chaosPlan,
+    chaosSet: new Set(chaosPlan.map((x) => x.space)),
     bonusTileOwner: null,
     finishOrder: [],
     /** 每位玩家最后一次落位的先后序号（同格时判定谁在上） */
@@ -358,15 +459,17 @@ function legalActions(state) {
 }
 
 function score(state, playerIndex) {
+  const rules = state.rules || DEFAULT_VARIANT;
   const player = state.players[playerIndex];
   const empty = emptySpaces(player.board);
-  const bonus = player.hasBonusTile ? SEVEN_BY_SEVEN_BONUS : 0;
+  const bonus = player.hasBonusTile ? rules.bonusBonus : 0;
+  const penalty = empty * rules.emptyPenalty;
   return {
     buttons: player.buttons,
     bonus,
     empty,
-    penalty: empty * EMPTY_PENALTY,
-    total: player.buttons + bonus - empty * EMPTY_PENALTY,
+    penalty,
+    total: player.buttons + bonus - penalty,
   };
 }
 
@@ -415,4 +518,7 @@ module.exports = {
   hasAnyLegalPlacement,
   legalPlacements,
   PATCH_BY_ID,
+  VARIANTS,
+  CHAOS_KINDS,
+  CHAOS_EVENTS,
 };

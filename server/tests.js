@@ -410,8 +410,12 @@ check('皮革补丁都记到了板上',
 
 console.log('\n[21] 电脑对手能自己打完一局');
 const ai = require('./ai');
-function playAiGame(n, level) {
-  const state = engine.createGame(Array.from({ length: n }, (_, i) => ({ name: 'AI' + i, bot: true })));
+function playAiGame(n, level, variant) {
+  const state = engine.createGame(
+    Array.from({ length: n }, (_, i) => ({ name: 'AI' + i, bot: true })),
+    Math.random,
+    { variant },
+  );
   let moves = 0;
   while (!engine.isGameOver(state) && moves < 2000) {
     moves += 1;
@@ -446,6 +450,140 @@ function playAiGame(n, level) {
 });
 const easy = playAiGame(2, 'easy');
 check('轻松难度也能正常打完', easy.over && easy.moves < 1500);
+
+/* ------------------------------------------------------------------ */
+/* v1.5 魔改版                                                        */
+/* ------------------------------------------------------------------ */
+console.log('\n[22] 魔改版：规则变体');
+
+/** 造一个魔改局，并把混沌格收成只剩一格，方便逐一验证四种事件 */
+function chaosState(kind, space = 12) {
+  const s = engine.createGame(['甲', '乙'], () => 0, { variant: 'chaos' });
+  s.chaosPlan = [{ space, kind }];
+  s.chaosSet = new Set([space]);
+  return s;
+}
+/** 让某位玩家“刚好走到” space 那一格（把对手摆在同格，行动 A 才走得出一步） */
+function walkTo(s, seat, space) {
+  s.players[seat].time = space - 1;
+  s.players[1 - seat].time = space - 1;
+  return engine.advance(s, seat);
+}
+
+eq('魔改版起始 0 纽扣', engine.createGame(['甲'], () => 0, { variant: 'chaos' }).players[0].buttons, 0);
+eq('经典版起始 5 纽扣', engine.createGame(['甲'], () => 0).players[0].buttons, 5);
+eq('魔改版可见 4 块', engine.visiblePatchIds(engine.createGame(['甲'], () => 0, { variant: 'chaos' })).length, 4);
+eq('经典版可见 3 块', engine.visiblePatchIds(engine.createGame(['甲'], () => 0)).length, 3);
+eq('魔改版补丁池 26 块', engine.createGame(['甲'], () => 0, { variant: 'chaos' }).circle.length, 26);
+eq('经典版补丁池 33 块', engine.createGame(['甲'], () => 0).circle.length, 33);
+check('魔改版 1×2 那块 A 依旧压在环尾',
+  engine.createGame(['甲'], () => 0, { variant: 'chaos' }).circle.slice(-1)[0] === 'A');
+// 抽签得是随机的：两次开局不该抽出同一个顺序
+const poolA = engine.createGame(['甲'], Math.random, { variant: 'chaos' }).circle.join('');
+const poolB = engine.createGame(['甲'], Math.random, { variant: 'chaos' }).circle.join('');
+check('魔改版每局抽到的补丁池不一样', poolA !== poolB);
+check('未知变体名退回经典', engine.createGame(['甲'], () => 0, { variant: '不存在' }).circle.length === 33);
+
+const chaosBoard = engine.createGame(['甲', '乙'], () => 0, { variant: 'chaos' });
+eq('魔改版混沌格 3 个', chaosBoard.rules.chaosSpaces.length, 3);
+check('混沌格都避开了纽扣格与皮革格', chaosBoard.rules.chaosSpaces.every(
+  (s) => TIME_BOARD[s] === 'normal'));
+check('混沌格位置就是 12 / 30 / 48', chaosBoard.rules.chaosSpaces.join(',') === '12,30,48');
+check('开局预抽的三个混沌事件互不相同',
+  new Set(chaosBoard.chaosPlan.map((x) => x.kind)).size === chaosBoard.chaosPlan.length);
+check('混沌事件都是已知花样',
+  chaosBoard.chaosPlan.every((x) => engine.CHAOS_KINDS.indexOf(x.kind) >= 0));
+eq('经典局没有混沌格', engine.createGame(['甲'], () => 0).rules.chaosSpaces.length, 0);
+
+// --- 天赐 ---
+{
+  const s = chaosState('bonus');
+  s.players[0].buttons = 3;
+  const ev = walkTo(s, 0, 12).events;
+  const c = ev.find((e) => e.type === 'chaos');
+  check('混沌·天赐：写进 lastEvents', Boolean(c) && c.kind === 'bonus' && c.space === 12);
+  eq('混沌·天赐：白拿 6 个纽扣', s.players[0].buttons, 3 + 1 + 6); // +1 是行动 A 自己领的那格
+}
+
+// --- 苛捐 ---
+{
+  const s = chaosState('toll');
+  s.players[0].buttons = 10;
+  const c = walkTo(s, 0, 12).events.find((e) => e.type === 'chaos');
+  check('混沌·苛捐：扣 4 个', Boolean(c) && c.paid === 4 && s.players[0].buttons === 7);
+}
+{
+  const s = chaosState('toll');
+  s.players[0].buttons = 0; // 一个纽扣都没有
+  const c = walkTo(s, 0, 12).events.find((e) => e.type === 'chaos');
+  // 行动 A 先给了他 1 个，苛捐要扣 4 个却只够扣 1 个 —— 扣光为止，绝不变负
+  check('混沌·苛捐：纽扣不够就扣光，不会变负',
+    Boolean(c) && c.paid === 1 && s.players[0].buttons === 0);
+}
+
+// --- 命运交换 ---
+{
+  const s = chaosState('swap');
+  s.players[0].buttons = 20;
+  s.players[1].buttons = 4;
+  const c = walkTo(s, 0, 12).events.find((e) => e.type === 'chaos');
+  check('混沌·命运交换：跟纽扣最多的对手对调口袋',
+    Boolean(c) && c.with === 1 && s.players[0].buttons === 4 && s.players[1].buttons === 21);
+}
+
+// --- 跃迁 ---
+{
+  const s = chaosState('leap');
+  s.players[0].buttons = 5;
+  const c = walkTo(s, 0, 12).events.find((e) => e.type === 'chaos');
+  check('混沌·跃迁：额外前进 2 格', Boolean(c) && c.advanced === 2 && s.players[0].time === 14);
+  eq('混沌·跃迁：途中纽扣格照收', s.players[0].buttons, 6); // 12 走 13（无）、14（纽扣格 11+3）
+}
+{
+  // 跃迁踩在终点前，不能冲出时间板
+  const s = chaosState('leap', 51);
+  s.players[0].time = 50;
+  s.players[1].time = 50;
+  engine.advance(s, 0);
+  eq('混沌·跃迁：不会越过终点 53', s.players[0].time, 53);
+  eq('混沌·跃迁：冲到终点就算完成', s.players[0].finished, true);
+}
+
+// --- 经典局完全不碰这套 ---
+{
+  const s = engine.createGame(['甲', '乙'], () => 0);
+  s.players[0].buttons = 5;
+  walkTo(s, 0, 12);
+  check('经典局走到第 12 格什么也不会发生', s.players[0].buttons === 5 + 1);
+}
+
+// --- 魔改局电脑能自己打完 ---
+{
+  const r = playAiGame(2, 'normal', 'chaos');
+  check(`魔改局电脑能自己打完（${r.moves} 手）`, r.over && r.moves < 1500);
+  check(`魔改局电脑确实在买补丁（共 ${r.placedTotal} 块）`, r.placedTotal > 6);
+  const r3 = playAiGame(3, 'normal', 'chaos');
+  check(`魔改版 3 人局也能打完（${r3.moves} 手）`, r3.over);
+}
+{
+  // 魔改版的 7×7 奖励翻倍、空格罚分更贵，用同一块板子对照一下
+  const mk = (variant) => {
+    const s = engine.createGame(['甲'], () => 0, { variant });
+    s.players[0].buttons = 10;
+    for (let r = 0; r < 7; r += 1) {
+      for (let c = 0; c < 7; c += 1) s.players[0].board[r][c] = { id: 'A', oriIndex: 0 };
+    }
+    s.players[0].hasBonusTile = true;
+    return engine.score(s, 0);
+  };
+  const a = mk('classic');
+  const b = mk('chaos');
+  eq('经典版 7×7 奖励 +7', a.bonus, 7);
+  eq('魔改版 7×7 奖励 +14', b.bonus, 14);
+  eq('经典版空格罚 2 分/格', a.penalty, a.empty * 2);
+  eq('魔改版空格罚 3 分/格', b.penalty, b.empty * 3);
+  eq('魔改版总分按新规则算', b.total, 10 + 14 - b.empty * 3);
+}
 
 console.log('\n----------------------------------------');
 console.log('通过 ' + pass + ' 项，失败 ' + fail + ' 项');

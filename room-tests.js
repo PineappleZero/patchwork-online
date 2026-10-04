@@ -217,7 +217,10 @@ function roomCount() {
   grabber.close();
   await sleep(2200);
   const roomsFinal = await roomCount();
-  check('房间总数没有失控', roomsFinal >= 0 && roomsFinal < 40, String(roomsFinal));
+  // 同一个服务进程里反复跑本文件时，房间数会因为「开过局的联机房保留 20 分钟等重连」
+  // 而一路累加，所以这里只能做个「没有失控」的粗上限；
+  // 真正验证回收能力的是 [9] 那两条增量断言（peak > 0 且 after < peak）。
+  check('房间总数没有失控', roomsFinal >= 0 && roomsFinal < 80, String(roomsFinal));
 
   host.close(); rejoin.close(); intruder.close(); stray.close();
   m1.close(); m2.close(); back3.close();
@@ -233,6 +236,60 @@ function roomCount() {
   await sleep(3000);
   const after = await roomCount();
   check('断开后空房间被回收', after < peak, peak + ' -> ' + after);
+
+  console.log('\n[10] 规则的第二种变体：魔改版（v1.5）');
+  const classicSolo = await wsClient();
+  await sleep(150);
+  classicSolo.send({ type: 'create', name: '老张', mode: 'solo', level: 'normal' });
+  await sleep(450);
+  const cs = classicSolo.latest('state');
+  check('不指定变体时开的是经典版', cs.variant === 'classic', String(cs.variant));
+  check('经典版广播了规则数值', cs.rules && cs.rules.startButtons === 5,
+    JSON.stringify(cs.rules));
+  check('经典版环上 33 块补丁', cs.circle.length === 33, String(cs.circle.length));
+  check('经典版没有混沌格', cs.rules.chaosSpaces.length === 0);
+  classicSolo.close();
+
+  const chaosSolo = await wsClient();
+  await sleep(150);
+  chaosSolo.send({ type: 'create', name: '老王', mode: 'solo', level: 'normal', variant: 'chaos' });
+  await sleep(450);
+  const ks = chaosSolo.latest('state');
+  check('魔改版单机房认出了 variant', ks.variant === 'chaos', String(ks.variant));
+  check('魔改版开局 0 纽扣', ks.players.every((p) => p.buttons === 0),
+    JSON.stringify(ks.players.map((p) => p.buttons)));
+  check('魔改版环上只剩 26 块', ks.circle.length === 26, String(ks.circle.length));
+  check('魔改版前方可见 4 块', ks.visible.length === 4, String(ks.visible.length));
+  check('魔改版广播了 3 个混沌格',
+    ks.rules.chaosSpaces.join(',') === '12,30,48', ks.rules.chaosSpaces.join(','));
+  chaosSolo.close();
+
+  // 联机房里房主选了魔改，1 号位加入后拿到的仍然得是同一套规则
+  const cHost = await wsClient();
+  await sleep(150);
+  cHost.send({ type: 'create', name: '魔改房主', mode: 'online', capacity: 2, variant: 'chaos' });
+  await sleep(350);
+  const cRoom = cHost.latest('joined').room;
+  check('房主侧 joined 就带上了变体', cHost.latest('joined').variant === 'chaos');
+  const cGuest = await wsClient();
+  await sleep(150);
+  cGuest.send({ type: 'join', name: '魔改客人', room: cRoom });
+  await sleep(450);
+  const cst = cHost.latest('state');
+  check('魔改联机房开局后仍是魔改', cst.variant === 'chaos' && cst.started === true);
+  check('客人也看到同一套魔改规则', cGuest.latest('state').rules.bonusBonus === 14);
+  check('魔改联机房也认得那 4 块可选', cst.visible.length === 4);
+
+  // 重开一局不能把变体丢掉
+  cHost.send({ type: 'rematch' });
+  await sleep(120);
+  cGuest.send({ type: 'rematch' });
+  await sleep(600);
+  const rr = cHost.latest('state');
+  check('重开一局后变体不丢', rr.variant === 'chaos' && rr.phase === 'playing');
+  check('重开后依旧是魔改的数值', rr.rules.emptyPenalty === 3 && rr.circle.length === 26);
+  cHost.close();
+  cGuest.close();
 
   console.log('\n----------------------------------------');
   console.log('通过 ' + pass + ' 项，失败 ' + fail + ' 项');

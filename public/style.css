@@ -44,7 +44,7 @@ html, body {
 }
 
 .menu-card {
-  width: 430px;
+  width: 736px;
   max-width: calc(100vw - 32px);
   margin: auto;
   background: var(--panel);
@@ -53,6 +53,143 @@ html, body {
   padding: 30px 26px 22px;
   box-shadow: 0 24px 60px rgba(0, 0, 0, .55);
 }
+
+/* ---------------- 主菜单：标题的「艺术字」----------------
+   纯 CSS，不用图片也不引字体文件：渐变填色 + 背景裁剪到文字 +
+   一层极淡的描边 + 双层投影（一层贴边压暗、一层向外发金光）。
+   这样在任何机器上渲染结果一致，也不会多出一个下载失败的文件。 */
+.brand { position: relative; padding-top: 2px; }
+.brand::after {
+  content: '';
+  display: block;
+  width: 148px;
+  height: 1px;
+  margin: 16px auto 0;
+  background: linear-gradient(90deg, transparent, var(--gold-dim), transparent);
+}
+.title {
+  margin: 0;
+  font-size: 46px;
+  line-height: 1.12;
+  font-weight: 800;
+  letter-spacing: .2em;
+  /* 字距会在末尾多留一个空档，居中的话整行会往左偏，这里补回来 */
+  text-indent: .2em;
+  text-align: center;
+  background-image: linear-gradient(178deg, #fff6dd 0%, #f0c879 32%, #b7832c 62%, #ffe7b0 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-stroke: 1px rgba(255, 244, 214, .3);
+  filter: drop-shadow(0 1px 0 rgba(0, 0, 0, .8)) drop-shadow(0 6px 16px rgba(232, 181, 99, .3));
+}
+/* 不支持 background-clip:text 的老浏览器：至少保证是金色实心字，别变成空白 */
+@supports not ((-webkit-background-clip: text) or (background-clip: text)) {
+  .title { color: var(--gold); background: none; }
+}
+
+.menu-top {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.menu-top .field { flex: 1; min-width: 0; margin-bottom: 0; }
+
+/* 音效开关：主菜单和对局页各一个，长一个样 */
+.sfx-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--gold);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 12px 12px;
+  cursor: pointer;
+  transition: border-color .14s, color .14s, background .14s;
+}
+.sfx-btn:hover { border-color: var(--gold-dim); background: #202636; }
+.sfx-btn .sfx-ico { position: relative; font-size: 15px; display: inline-block; }
+/* 关掉时给音符划一道斜杠 —— 比单纯变灰更容易一眼看出状态 */
+.sfx-btn.off { color: #5f6880; }
+.sfx-btn.off .sfx-ico::after {
+  content: '';
+  position: absolute;
+  left: -2px; right: -2px;
+  top: 50%;
+  height: 1.5px;
+  background: currentColor;
+  border-radius: 1px;
+  transform: rotate(-24deg);
+}
+.sfx-btn.compact { padding: 7px 9px; font-size: 11px; }
+.sfx-btn.compact .sfx-ico { font-size: 13px; }
+
+/* ---------------- 主菜单：单机 / 联机左右并排 ---------------- */
+.menu-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 22px;
+  align-items: start;
+}
+.menu-grid .menu-sec { margin-top: 0; padding-top: 0; border-top: none; }
+.menu-grid .menu-sec + .menu-sec {
+  border-left: 1px solid var(--line-soft);
+  padding-left: 22px;
+}
+
+/* 「魔改版」分组的小标题带 */
+.variant-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 16px 0 9px;
+}
+.variant-head::after {
+  content: '';
+  flex: 1;
+  min-width: 8px;
+  height: 1px;
+  background: var(--line-soft);
+}
+.vh-tag {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  color: #1a1226;
+  background: linear-gradient(120deg, #d59cf0, #8f6fd0);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.vh-sub { flex: none; font-size: 10.5px; color: var(--text-faint); letter-spacing: .04em; }
+
+.variant-row { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.variant-row .mode-card { margin-bottom: 0; }
+
+.variant-hint {
+  margin: 9px 0 0;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-faint);
+}
+
+/* 魔改版的入口用紫调，跟经典版的金调一眼分得开 */
+.mode-card.chaos {
+  background: linear-gradient(150deg, #251d36, #1b2030 62%);
+  border-color: #4b3a6b;
+}
+.mode-card.chaos:hover {
+  border-color: #8f6fd0;
+  background: linear-gradient(150deg, #2d2442, #1f2537 62%);
+}
+.mode-card.chaos b { color: #d9bdf0; }
+
 
 .menu-sec {
   margin-top: 20px;
@@ -156,17 +293,10 @@ select option { background: var(--panel); color: var(--text); }
   user-select: all;
 }
 
-.title {
-  margin: 0;
-  font-size: 38px;
-  letter-spacing: .22em;
-  text-align: center;
-  color: var(--gold);
-  font-weight: 600;
-}
+/* 标题的样式在上面的「主菜单：标题的艺术字」一节里，这里不再重复定义 */
 
 .subtitle {
-  margin: 6px 0 26px;
+  margin: 8px 0 20px;
   text-align: center;
   color: var(--text-faint);
   letter-spacing: .16em;
@@ -288,6 +418,12 @@ kbd {
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 3px 10px;
+}
+/* 魔改局：顶栏这个标签也换成紫的，一进对局就知道规则不一样 */
+.mode-tag.chaos {
+  color: #d9bdf0;
+  border-color: #6a4f9a;
+  background: rgba(143, 111, 208, .14);
 }
 .turn-tag {
   flex: 1;
@@ -616,17 +752,22 @@ kbd {
 }
 
 /* 换成环绕方式时把 .players 让出一条空带，补丁就落在这条带子里。
-   宽度收成 904px（＝56 + 390 + 12 + 390 + 56）刚好把两块拼布板框住，
-   竖着居中，整块框不必去占满整列。
+   v1.5 把这条带子（＝轨道）整个放宽了，好让补丁摆得更开、也画得更大：
+     · .players 从 904px 放到 1000px（正好 = 94 + 400 + 12 + 400 + 94）；
+     · 中间那列同步从 420px 收到 344px —— 绕拼布板时圆环不在了，
+       中间只剩时间板和事件纪要，本来也吃不下 420px，把地方让给轨道正好。
    内边距只是个兜底值：真正的带宽由 app.js 的 frameBand() 按实际宽度算好写进内联样式
-   （它必须 ≥ 路径内缩 + 补丁外伸，否则补丁的金色描边会压到拼布板上）。 */
+   （它必须 ≥ 路径内缩 + 补丁半身位 + 金色描边，否则描边会压到拼布板上）。 */
+.board-wrap.layout-frame { grid-template-columns: minmax(0, 1fr) minmax(300px, 344px); }
+.board-wrap.layout-frame .center { width: auto; }
+
 .board-wrap.layout-frame .players {
-  width: min(100%, 904px);
+  width: min(100%, 1000px);
   justify-self: center;
   align-self: center;
   height: fit-content;
   align-content: start;
-  padding: 56px;
+  padding: 94px;
   overflow: visible;
 }
 
@@ -686,23 +827,49 @@ kbd {
   50% { filter: drop-shadow(0 0 5px rgba(232, 181, 99, .9)); }
 }
 
-/* 中立指示物：金色小药丸，永远停在正前方的逆时针一侧 */
+/* 中立棋子（v1.5）：以前是个写着「中立」的小药丸，现在真的做成一枚棋子 ——
+   斜上方打光的金属圆片，脚下再垫一圈椭圆阴影，看着是「立」在轨道上。
+   位置由 app.js 算好，圆环时停在环内侧、圆角矩形时压在上边那条轨道上。 */
 .ring-neutral {
   position: absolute;
   left: 50%; top: 50%;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 28%, #fff4d6 0%, #e8b563 42%, #a06f26 100%);
+  box-shadow:
+    0 0 0 2px rgba(22, 16, 6, .8),
+    0 0 0 3.5px rgba(232, 181, 99, .34),
+    0 3px 9px rgba(0, 0, 0, .6);
   transform-origin: 50% 50%;
   transition: transform .42s cubic-bezier(.34, .8, .3, 1);
-  padding: 1px 5px;
-  border-radius: 999px;
-  background: var(--gold);
-  color: #241a06;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: .04em;
-  white-space: nowrap;
-  box-shadow: 0 0 0 2px rgba(232, 181, 99, .18), 0 2px 6px rgba(0, 0, 0, .5);
   pointer-events: none;
+  z-index: 3;
 }
+.ring-neutral::after {
+  content: '';
+  position: absolute;
+  left: 50%; top: 100%;
+  width: 22px; height: 5px;
+  margin-left: -11px;
+  margin-top: -2px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(232, 181, 99, .5), rgba(232, 181, 99, 0) 72%);
+}
+
+/* 时间板上的混沌格（魔改版专属）。底色走紫，跟绿色纽扣格、棕色皮革格
+   在灰度上也区分得开 —— 色弱玩家同样认得出。 */
+.tb-cell.chaos {
+  background: linear-gradient(155deg, #3d2b58, #2a2340);
+  box-shadow: inset 0 0 0 1px rgba(201, 139, 224, .34);
+}
+.tb-cell.chaos::after {
+  content: '';
+  width: 48%; height: 48%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #f0d6ff, #8f6fd0 72%);
+}
+.tb-cell.chaos .num { color: #e2ccf7; opacity: .8; }
 
 /* 正面三块：可点的大卡片。
    高度必须锁死 —— 形状有大有小、还有一句「差 N 纽扣」，
@@ -868,6 +1035,8 @@ kbd {
 .log:empty::before { content: '事件纪要会一条条记在这里…'; color: var(--text-faint); }
 .log .hl { color: var(--gold); }
 .log .g { color: var(--green); }
+/* 魔改版的混沌事件：日志里那一小段紫字，跟平常的纽扣/皮革事件区分开 */
+.log .chaos-word { color: #d9bdf0; }
 .log .b { color: var(--blue); }
 
 /* 手动往上翻看历史时，新条目不再硬抢滚动位置，只用这个小按钮提示 */
@@ -1147,6 +1316,8 @@ kbd {
   /* 窄一档：环和时间板一起等比缩，不用同步改 JS（半径是从轨道宽度反算的） */
   .ring-stage { --ring-d: 288px; --tb-cell: 21px; }
   .ring-front .patch-shape { height: 50px; }
+  /* 中间列收窄后，绕拼布板这条轨道还能多挤一点出来 */
+  .board-wrap.layout-frame { grid-template-columns: minmax(0, 1fr) minmax(280px, 320px); }
 }
 
 /* 窗口矮的时候（笔记本 768p 之类）把环再缩一档，
@@ -1154,6 +1325,24 @@ kbd {
 @media (max-height: 760px) {
   .ring-stage { --ring-d: 288px; --tb-cell: 21px; }
   .ring-front .patch-shape { height: 50px; }
+  /* 矮屏上主菜单可能顶到顶，把两栏稍微收一收 */
+  .menu-card { padding: 22px 22px 18px; }
+  .title { font-size: 38px; }
+  .brand::after { margin-top: 11px; }
+}
+
+/* 主菜单两栏在窄屏上摞回上下，竖排时把竖分隔线换成横的 */
+@media (max-width: 780px) {
+  .menu-grid { grid-template-columns: 1fr; gap: 0; }
+  .menu-grid .menu-sec + .menu-sec {
+    border-left: none;
+    padding-left: 0;
+    border-top: 1px solid var(--line-soft);
+    margin-top: 20px;
+    padding-top: 18px;
+  }
+  .menu-top { flex-wrap: wrap; }
+  .menu-top .field { flex: 1 1 100%; }
 }
 
 @media (max-width: 860px) {
@@ -1169,4 +1358,7 @@ kbd {
   .players .player-card { max-width: 360px; }
   .center { width: 100%; order: 2; }
   .quilt { max-width: 300px; margin: 0 auto; }
+  /* 窄屏本来就只有一列，圆角矩形那条框没地方摆，一律退回圆环 */
+  .board-wrap.layout-frame { grid-template-columns: minmax(0, 1fr); }
+  .board-wrap.layout-frame .center { width: 100%; }
 }

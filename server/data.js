@@ -89,6 +89,64 @@ const EMPTY_PENALTY = 2;
 /** 补丁市场：中立指示物前方可见的补丁数 */
 const MARKET_VISIBLE = 3;
 
+/* ------------------------------------------------------------------ */
+/* 魔改版（v1.5）                                                       */
+/* ------------------------------------------------------------------ */
+/*
+ * 「魔改版 · 混沌拼布」不改补丁的形状与数值（那是原版数据，动不得），
+ * 改的是**规则参数**和**时间板上多出来的一件事**。全部差异集中在这一张表里，
+ * 引擎只认 rules.xxx，不认 variant 这个名字 —— 以后想加第三种变体，加一行就行。
+ *
+ *   startButtons  开局手里有几个纽扣。原版 5 个，魔改 0 个 —— 从零开始挣。
+ *   marketVisible 中立指示物前方可选几块。原版 3，魔改 4 —— 选择更多。
+ *   bonusBonus    7×7 奖励分。原版 7，魔改 14 —— 铺满的诱惑翻倍。
+ *   emptyPenalty  每空一格的罚分。原版 2，魔改 3 —— 摆烂的代价更贵。
+ *   poolSize      这一局用多少块补丁。原版 33 块全用；魔改只抽 26 块，
+ *                 环更短、转得更快，几局下来每局的补丁池都不一样。
+ *   chaosSpaces   混沌格的位置（见下面 CHAOS_EVENTS）。
+ */
+
+/** 混沌事件：经过混沌格时随机触发一个 */
+const CHAOS_EVENTS = {
+  /** 天赐：白拿这么多纽扣 */
+  bonus: 6,
+  /** 苛捐：最多扣这么多纽扣（不够就扣光，不会变成负数） */
+  toll: 4,
+  /** 跃迁：额外前进这么多格，途中纽扣格照收 */
+  leap: 2,
+};
+
+/** 混沌格：全板 3 个，避开了原有的纽扣格与皮革格 */
+const CHAOS_SPACES = [12, 30, 48];
+
+const VARIANTS = {
+  classic: {
+    key: 'classic',
+    label: '经典版',
+    blurb: '原版规则，33 块补丁全用',
+    startButtons: START_BUTTONS,
+    marketVisible: MARKET_VISIBLE,
+    bonusBonus: SEVEN_BY_SEVEN_BONUS,
+    emptyPenalty: EMPTY_PENALTY,
+    poolSize: null,
+    chaosSpaces: [],
+  },
+  chaos: {
+    key: 'chaos',
+    label: '魔改版',
+    blurb: '混沌拼布：0 纽扣起步，4 选 1，混沌格随机发牌',
+    startButtons: 0,
+    marketVisible: 4,
+    bonusBonus: SEVEN_BY_SEVEN_BONUS * 2,
+    emptyPenalty: EMPTY_PENALTY + 1,
+    poolSize: 26,
+    chaosSpaces: CHAOS_SPACES.slice(),
+  },
+};
+
+/** 缺省变体，任何地方拿不到 rules 时都退回它 */
+const DEFAULT_VARIANT = VARIANTS.classic;
+
 const PATCHES = PATCH_DEFS.map((def) => {
   const cells = [];
   let rows = def.rows.length;
@@ -182,4 +240,8 @@ module.exports = {
   START_BUTTONS,
   EMPTY_PENALTY,
   MARKET_VISIBLE,
+  VARIANTS,
+  DEFAULT_VARIANT,
+  CHAOS_EVENTS,
+  CHAOS_SPACES,
 };

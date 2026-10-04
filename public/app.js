@@ -26,6 +26,110 @@ const PALETTE = {
 /* 时间令牌的座位配色，最多 6 人 */
 const SEAT_COLORS = ['#e8b563', '#5c9dd6', '#5fbf8f', '#c98be0', '#e08a5f', '#8fb7e0'];
 
+/* ---------------- 音效（v1.5） ----------------
+ * 全部用 WebAudio 现场合成，一个音频文件都不引。
+ * 这个项目立身之本就是「零依赖、双击 bat 就能玩」，塞一堆 mp3 进来等于
+ * 把加载失败、路径大小写、编码错这些坑一次性全请回来。合成音又小又稳。
+ * 每种音效无非两三段正弦/三角/方波，几十毫秒，播完就丢，不占内存。
+ */
+const SFX = {
+  on: true,
+  ctx: null,
+  master: null,
+  /** 浏览器要求「用户先有过交互」才准出声，所以第一次真要点的时候才建上下文 */
+  ensure() {
+    if (this.ctx) {
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+      return this.ctx;
+    }
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    try {
+      this.ctx = new Ctx();
+      this.master = this.ctx.createGain();
+      // 总音量压得很低：这是游戏音效不是音乐，吵到人就该被关掉了
+      this.master.gain.value = 0.14;
+      this.master.connect(this.ctx.destination);
+    } catch (e) { this.ctx = null; }
+    return this.ctx;
+  },
+  /** 一个固定音高的音。at = 相对现在往后延多少秒（用来拼琶音） */
+  tone(freq, dur, type, at, gain) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t0 = ctx.currentTime + (at || 0);
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = type || 'sine';
+    osc.frequency.setValueAtTime(freq, t0);
+    // 起手先给一个极小值再指数衰减；直接 0 → 目标值会「啪」一声爆音
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.001, gain || 1), t0 + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(g);
+    g.connect(this.master);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.03);
+  },
+  /** 一段滑音，用来做「跳过」的下坠和「不行」的钝响 */
+  slide(f0, f1, dur, type) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t0 = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = type || 'triangle';
+    osc.frequency.setValueAtTime(f0, t0);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t0 + dur);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.9, t0 + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(g);
+    g.connect(this.master);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.03);
+  },
+  /** 报一个音效名。没开、或浏览器不支持 WebAudio 时静默返回，绝不影响玩法 */
+  play(name) {
+    if (!this.on) return;
+    if (!this.ensure()) return;
+    const t = (f, d, ty, at, gn) => this.tone(f, d, ty, at, gn);
+    const arp = (list, step, dur, ty) => list.forEach((f, i) => t(f, dur, ty, i * step));
+    switch (name) {
+      case 'click': t(780, 0.05, 'square', 0, 0.5); break;
+      case 'pick': t(560, 0.07, 'triangle'); t(840, 0.09, 'triangle', 0.05); break;
+      case 'place': t(430, 0.08, 'triangle'); t(650, 0.11, 'triangle', 0.06); break;
+      case 'buy': arp([523, 659, 784], 0.06, 0.11, 'triangle'); break;
+      case 'skip': this.slide(430, 235, 0.17); break;
+      case 'income': t(1046, 0.06, 'square', 0, 0.4); t(1318, 0.10, 'square', 0.05, 0.36); break;
+      case 'leather': arp([392, 523, 659, 784], 0.05, 0.13, 'sine'); break;
+      case 'turn': t(523, 0.09, 'sine'); t(784, 0.13, 'sine', 0.09); break;
+      // 混沌格的音色刻意做得怪一点：四度跳来跳去，一听就知道没好事
+      case 'chaos': arp([880, 1245, 660, 1320], 0.055, 0.09, 'square'); break;
+      case 'win': arp([523, 659, 784, 1046, 1318], 0.11, 0.26, 'triangle'); break;
+      case 'lose': arp([440, 370, 294], 0.14, 0.24, 'sine'); break;
+      case 'error': this.slide(210, 130, 0.14, 'sawtooth'); break;
+      default: break;
+    }
+  },
+};
+
+/** 音效开关。主菜单和对局页各有一个，两处状态永远同步（改一个全改）。 */
+function setSfx(on, remember) {
+  SFX.on = Boolean(on);
+  if (remember !== false) {
+    try { localStorage.setItem('pwSfx', SFX.on ? '1' : '0'); } catch (e) { /* 忽略 */ }
+  }
+  Array.from(document.querySelectorAll('[data-sfx-toggle]')).forEach((btn) => {
+    btn.classList.toggle('off', !SFX.on);
+    btn.setAttribute('aria-pressed', SFX.on ? 'true' : 'false');
+    btn.title = SFX.on ? '音效已开 · 点一下静音' : '音效已关 · 点一下打开';
+    const txt = btn.querySelector('.sfx-txt');
+    if (txt) txt.textContent = SFX.on ? '音效开' : '音效关';
+  });
+  return SFX.on;
+}
+
 /* ---------------- 全局状态 ---------------- */
 const S = {
   ws: null,
@@ -44,9 +148,12 @@ const S = {
   cursors: {},           // 其他座位正在考虑放置的补丁（联机时的实时预览）
   logEvents: [],
   lastEventKey: null,
-  // 环绕方式：'ring' 环着时间板（默认）／'frame' 圆角矩形绕着两块拼布板。
+  // 环绕方式：'ring' 环着时间板／'frame' 圆角矩形绕着两块拼布板。
   // 纯观感，只影响自己这块屏幕，所以存在本地、不进房间状态。
-  layout: 'ring',
+  // v1.5 起默认 'frame' —— 双人局一进来就是「绕拼布板」，补丁大、看得清。
+  layout: 'frame',
+  // 本局的规则变体（'classic' | 'chaos'），由服务端在 state 里带过来
+  variant: 'classic',
 };
 
 /* ---------------- 三块屏幕 ---------------- */
@@ -159,7 +266,8 @@ function handleServerMessage(msg) {
     if (!prev && msg.history && msg.history.length) {
       $('log').innerHTML = '';
       S.lastEventKey = null;
-      logEvents({ players: msg.players }, { players: msg.players, lastEvents: msg.history });
+      // 补历史是「快进回放」，不该为几十手以前的事叮当一遍，所以静音
+      logEvents({ players: msg.players }, { players: msg.players, lastEvents: msg.history }, true);
       logToBottom(); // 回放完直接停在最新一条
     }
 
@@ -182,27 +290,37 @@ function handleServerMessage(msg) {
 
     // 局面推进了，之前那句「这里放不下」就过期了，别留着误导
     clearHint();
+    const someoneElseActing = prev && prev.active !== null && prev.active !== msg.active;
+    const wasMyTurn = prev ? prev.active === actSeat() : false;
     S.state = msg;
+    S.variant = msg.variant || 'classic';
     // 新的一局（刚开局 / 刚重开）：日志是空的，先起个头
     if (msg.phase === 'playing' && !$('log').children.length) {
       const starter = (msg.players[msg.active] || {}).name || '先手玩家';
-      pushLog(`<span class="hl">对局开始</span> · ${msg.players.length} 人 · ` +
+      const tag = msg.variant === 'chaos' ? ' · <b class="chaos-word">魔改版</b>' : '';
+      pushLog(`<span class="hl">对局开始</span> · ${msg.players.length} 人${tag} · ` +
         `先行动：${escapeHtml(starter)}`);
     }
     logEvents(prev, msg);
     render(prev);
+    // 轮到我了，来一声轻提示。上一手还是别人（或还没开局）才算「轮到我」，
+    // 否则同一个人连走几步会一路叮到底。
+    if (msg.phase === 'playing' && canAct() && !wasMyTurn && (someoneElseActing || !prev)) {
+      SFX.play('turn');
+    }
     return;
   }
 }
 
 /* 把服务端的 lastEvents 翻成人话写进日志 */
-function logEvents(prev, cur) {
+function logEvents(prev, cur, silent) {
   const ev = cur.lastEvents;
   if (!prev || !ev || !ev.length) return;
   // 同一批事件只记一次
   const key = JSON.stringify(ev);
   if (key === S.lastEventKey) return;
   S.lastEventKey = key;
+  if (!silent) playForEvents(ev);
 
   const who = (i) => `<span class="hl">${escapeHtml((cur.players[i] || {}).name || '玩家')}</span>`;
 
@@ -218,12 +336,44 @@ function logEvents(prev, cur) {
       pushLog(`&nbsp;&nbsp;↳ 经过纽扣格 <b>${e.space}</b>，收 ${e.gained} 纽扣`);
     } else if (e.type === 'leather') {
       pushLog(`&nbsp;&nbsp;↳ 经过皮革格 <b>${e.space}</b>，${who(p)} 拿到 1×1 补丁`);
+    } else if (e.type === 'chaos') {
+      logChaos(e, who(p));
     } else if (e.type === 'bonusTile') {
-      pushLog(`&nbsp;&nbsp;↳ ${who(p)} <b>拼出完整 7×7</b>，拿走唯一一块奖励 +7 分`);
+      pushLog(`&nbsp;&nbsp;↳ ${who(p)} <b>拼出完整 7×7</b>，拿走唯一一块奖励 +${(cur.rules && cur.rules.bonusBonus) || 7} 分`);
     } else if (e.type === 'leatherPlaced') {
       pushLog(`&nbsp;&nbsp;↳ 1×1 补丁放在第 ${e.row + 1} 行第 ${e.col + 1} 列`);
     }
   });
+}
+
+/** 混沌事件的中文说法（v1.5 魔改版才有） */
+function logChaos(e, whoHtml) {
+  const tag = `<b class="chaos-word">混沌格 ${e.space}</b>`;
+  if (e.kind === 'bonus') {
+    pushLog(`&nbsp;&nbsp;↳ ${tag} · <span class="g">天赐</span>，${whoHtml} 白拿 ${e.gained} 纽扣`);
+  } else if (e.kind === 'toll') {
+    pushLog(`&nbsp;&nbsp;↳ ${tag} · <span class="lose">苛捐</span>，${whoHtml} 被扣走 ${e.paid} 纽扣`);
+  } else if (e.kind === 'swap') {
+    if (e.with === null) {
+      pushLog(`&nbsp;&nbsp;↳ ${tag} · 命运交换，可惜场上没有别人`);
+    } else {
+      pushLog(`&nbsp;&nbsp;↳ ${tag} · <span class="hl">命运交换</span>，` +
+        `${whoHtml} 与第 ${e.with + 1} 位对调口袋（现在各持 ${e.mine} / ${e.theirs} 纽扣）`);
+    }
+  } else if (e.kind === 'leap') {
+    pushLog(`&nbsp;&nbsp;↳ ${tag} · <span class="hl">时间跃迁</span>，${whoHtml} 额外前进 ${e.advanced} 格`);
+  }
+}
+
+/* 一波事件配一次声音。只挑最响的几件事报，不然一整串叮叮当当反而听不清。 */
+function playForEvents(ev) {
+  const has = (t) => ev.some((e) => e.type === t);
+  if (has('bonusTile')) { SFX.play('win'); return; }
+  if (has('chaos')) { SFX.play('chaos'); return; }
+  if (has('leather')) { SFX.play('leather'); return; }
+  if (has('buy')) { SFX.play('buy'); return; }
+  if (has('advance')) { SFX.play('skip'); return; }
+  if (has('income')) SFX.play('income');
 }
 
 /* ---------------- 渲染 ---------------- */
@@ -232,7 +382,9 @@ function render() {
   if (!st) return;
 
   $('modeTag').textContent = modeLabel(st);
+  $('modeTag').classList.toggle('chaos', st.variant === 'chaos');
   $('boardWrap').dataset.n = String(st.players.length);
+  $('boardWrap').dataset.variant = st.variant || 'classic';
   $('btnCopy').style.display = st.mode === 'online' ? '' : 'none';
 
   renderTurnTag();
@@ -284,9 +436,10 @@ function renderTurnTag() {
 }
 
 function modeLabel(st) {
-  if (st.mode === 'solo') return '人机对战';
-  if (st.mode === 'local') return '同机双人';
-  return `${st.capacity} 人联机`;
+  const base = st.mode === 'solo' ? '人机对战'
+    : st.mode === 'local' ? '同机双人'
+      : `${st.capacity} 人联机`;
+  return st.variant === 'chaos' ? `${base} · 魔改` : base;
 }
 
 /** 两小时后桌面布局：自己尽量待在右边，跟以前的习惯一致 */
@@ -390,14 +543,17 @@ const RING = {
   minTile: 2.2, // 格子最小可视边长：块数多的时候别把远处的补丁缩成一个点
 };
 
-/* 「绕拼布板」布局（v1.4.1）：路径不是圆，是贴着两块拼布板的圆角矩形。
-   补丁沿四条边等弧长摊开、全部正放、一样大 —— 这样每一块都看得清清楚楚。
+/* 「绕拼布板」布局（v1.4.1 加，v1.5 放大）
+   路径不是圆，是贴着两块拼布板的圆角矩形。补丁沿四条边等弧长摊开、
+   全部正放、一样大 —— 这样每一块都看得清清楚楚。
      insetMax 路径离舞台边缘最多这么远（舞台小的时候会按比例收，见 frameInset）。
-               补丁是「骑」在路径上的，往里往外各伸约 22px，
-               所以 CSS 里 .board-wrap.layout-frame .players 的内边距必须 ≥ insetMax + 22。
+               补丁是「骑」在路径上的，往里往外各伸约半个身位（最大那块 5 格），
+               所以 .players 让出来的空带必须 ≥ insetMax + 半身位 + 描边。
      corner   圆角半径。
-     tile     框上小补丁的格子边长，比环上大一档 —— 这一档就是「看得清」的关键。 */
-const FRAME = { insetMax: 26, corner: 30, tile: 8, gap: 1 };
+     tile     框上小补丁的格子边长。v1.5 从 8px 提到 10px ——
+              最大的 5×5 补丁就是 5×10+4 = 54px，隔着半米也认得出形状。
+     gap      格子间隙。 */
+const FRAME = { insetMax: 30, corner: 34, tile: 10, gap: 1 };
 
 /**
  * 路径离舞台边缘多远。舞台越小越往回收一点（免得补丁顶到外面那圈拼布板的边），
@@ -423,8 +579,9 @@ function ringBaseMax(tile, gap) {
 }
 
 /**
- * 圆角矩形路径。从「下边正中」起步、按顺时针走一圈（第一步往左）——
- * 跟圆环的走向完全一致：6 点钟方向往左走，正是钟面上的顺时针。
+ * 圆角矩形路径。从「上边正中」起步、按顺时针走一圈（第一步往右）。
+ * v1.5 把起点从下边挪到了上边 —— 中立棋子因此落在拼布板**上方**那条轨道上，
+ * 不再挤在两块板中间那道缝里，也就不会挡住任何一块补丁。
  * 返回 { total, at(s) }，at 按弧长取点，坐标系是舞台左上角。
  */
 function framePath(w, h, P) {
@@ -434,15 +591,15 @@ function framePath(w, h, P) {
   const quarter = (Math.PI / 2) * r;
   // 屏幕坐标 y 朝下，所以角度 0=右、π/2=下、π=左、3π/2=上
   const raw = [
-    { line: [[half, B], [L + r, B]] },
-    { arc: [[L + r, B - r], Math.PI / 2, Math.PI] },        // 左下角
-    { line: [[L, B - r], [L, T + r]] },
-    { arc: [[L + r, T + r], Math.PI, 1.5 * Math.PI] },      // 左上角
-    { line: [[L + r, T], [R - r, T]] },
-    { arc: [[R - r, T + r], 1.5 * Math.PI, 2 * Math.PI] },  // 右上角
-    { line: [[R, T + r], [R, B - r]] },
-    { arc: [[R - r, B - r], 0, Math.PI / 2] },              // 右下角
-    { line: [[R - r, B], [half, B]] },
+    { line: [[half, T], [R - r, T]] },                       // 上边：正中 → 右上
+    { arc: [[R - r, T + r], 1.5 * Math.PI, 2 * Math.PI] },    // 右上角
+    { line: [[R, T + r], [R, B - r]] },                       // 右边
+    { arc: [[R - r, B - r], 0, Math.PI / 2] },                // 右下角
+    { line: [[R - r, B], [L + r, B]] },                       // 下边：右 → 左
+    { arc: [[L + r, B - r], Math.PI / 2, Math.PI] },          // 左下角
+    { line: [[L, B - r], [L, T + r]] },                       // 左边
+    { arc: [[L + r, T + r], Math.PI, 1.5 * Math.PI] },        // 左上角
+    { line: [[L + r, T], [half, T]] },                        // 上边：左 → 正中
   ];
   const parts = raw.map((g) => {
     if (g.line) {
@@ -456,7 +613,7 @@ function framePath(w, h, P) {
   return {
     total,
     at(s) {
-      if (!total) return { x: half, y: B };
+      if (!total) return { x: half, y: T };
       let t = ((s % total) + total) % total;      // 支持负数 / 超过一圈
       for (let i = 0; i < parts.length; i += 1) {
         const g = parts[i];
@@ -469,21 +626,23 @@ function framePath(w, h, P) {
         const ang = g.a0 + (g.a1 - g.a0) * k;
         return { x: g.c[0] + r * Math.cos(ang), y: g.c[1] + r * Math.sin(ang) };
       }
-      return { x: half, y: B };
+      return { x: half, y: T };
     },
   };
 }
 
 /**
- * 环绕布局要给 .players 留的那条空带有多宽。
- * 补丁是骑在路径上的，最宽的一块 5×8px 加描边，往外要伸 25px 左右，
- * 所以空带必须 ≥ 路径内缩 + 25，否则补丁的描边就压到拼布板的边上了。
- * 这里按 .players 的实际宽度给（它由 CSS 的 width: min(100%, 904px) 定死，
- * 跟内边距无关，所以能安全地先量宽度再定内边距）。
+ * 环绕布局要给 .players 留的那条空带有多宽 —— 这条带子就是「轨道」。
+ * v1.5 把它整体放宽了一档：补丁格子从 8px 提到 10px，最大那块变成 54px 宽，
+ * 往外要伸半个身位加金色描边（约 32px），所以带子必须比原来宽不少。
+ * 带子宽了，补丁就能摆得更开、看得更清楚，代价是拼布板被挤窄一点 ——
+ * 因此 frame 布局下中间那列也会同步收窄（见 CSS 的 .board-wrap.layout-frame）。
+ * 宽度按 .players 的实际宽度给：它由 CSS 的 width: min(100%, 1000px) 定死，
+ * 跟内边距无关，所以能安全地先量宽度再定内边距。
  */
 function frameBand(players) {
   const w = players.getBoundingClientRect().width;
-  return Math.max(52, Math.min(56, Math.round(w * 0.062)));
+  return Math.max(66, Math.min(94, Math.round(w * 0.09)));
 }
 
 /** 把 #frameStage 精确贴到 .players 的矩形上（两者都住在 .board-wrap 里） */
@@ -522,11 +681,13 @@ function buildFrameLayout(box, N) {
       const p = geo.at(rel * arc);
       return { x: p.x - cx, y: p.y - cy, s: scale };
     },
-    /** 中立指示物：停在起点「逆时针半格」的位置。起点在下边正中，
-     *  所以那一刻它正好落在下边那条直边上、往环里挪一点，不压到补丁。 */
+    /** 中立棋子：停在起点「逆时针半格」的位置。
+     *  起点（rel=0，也就是第一块可选补丁）在**上边正中**，
+     *  所以它落在拼布板上方那条轨道上、紧挨着第一块补丁的左边 ——
+     *  既不在下面挡视线的位置，又能一眼看出「往右数就是能买的」。 */
     neutral() {
       const p = geo.at(geo.total - arc / 2);
-      return { x: p.x - cx, y: p.y - cy - 26 };
+      return { x: p.x - cx, y: p.y - cy };
     },
   };
 }
@@ -635,6 +796,7 @@ function placeChips(host, ctx, layout, alive) {
 
 /** 在环上／框上点中一块补丁 == 点下方那张大卡片 */
 function pickPatch(pid) {
+  SFX.play('pick');
   S.selected = { patchId: pid };
   S.oriIndex = 0;
   S.locked = null;
@@ -655,7 +817,8 @@ function renderRing() {
   const circle = st.circle || [];
   const N = circle.length;
   const neutral = st.neutral || 0;
-  const visible = (st.visible || []).slice(0, 3);
+  // 魔改版前方是 4 块，经典版 3 块 —— 再也不写死，直接照着服务端给的长度来
+  const visible = (st.visible || []).slice();
 
   // 环绕方式：「绕拼布板」只给双人局，人少了多了都退回「环绕时间板」
   const canSwitch = st.players.length === 2;
@@ -728,8 +891,9 @@ function renderRing() {
     setTimeout(() => chip.remove(), 220);
   });
 
-  // ---- 中立指示物：夹在「正前方那一块」逆时针一侧 ----
+  // ---- 中立棋子 ----
   if (tok) {
+    tok.classList.toggle('on-top', useFrame);
     if (!N) {
       tok.hidden = true;
     } else {
@@ -737,13 +901,14 @@ function renderRing() {
       let x;
       let y;
       if (useFrame) {
+        // 绕拼布板：棋子就压在方框上边那条轨道上（buildFrameLayout.neutral 给的点）
         const p = layout.neutral();
         x = Math.round(p.x);
         y = Math.round(p.y);
       } else {
         const th = ((180 - layout.seg / 2) * Math.PI) / 180;
-        // 放在环内侧：环内正好是「时间板外沿 → 轨道」之间那条空带，
-        // 指示物停在这儿既不压到棋盘，也紧贴着它指向的那一格。
+        // 环着时间板：放在环内侧。环内正好是「时间板外沿 → 轨道」之间那条空带，
+        // 棋子停在这儿既不压到棋盘，也紧贴着它指向的那几格。
         const rTok = Math.max(30, layout.R - 14);
         x = Math.round(rTok * Math.sin(th));
         y = Math.round(-rTok * Math.cos(th));
@@ -755,10 +920,13 @@ function renderRing() {
   renderRingFront(front, visible, me);
 }
 
-/** 正面那 3 块：放大、带完整数字、可点 */
+/** 正面那几块（经典 3 块 / 魔改 4 块）：放大、带完整数字、可点 */
 function renderRingFront(front, visible, me) {
   front.innerHTML = '';
-  for (let i = 0; i < 3; i += 1) {
+  const n = visible.length;
+  // 列数跟着可见数走：魔改版就是 4 列。留个兜底，免得 0 块时算出 repeat(0, 1fr)
+  front.style.gridTemplateColumns = `repeat(${Math.max(1, n)}, 1fr)`;
+  for (let i = 0; i < n; i += 1) {
     const pid = visible[i];
     const card = document.createElement('div');
     if (!pid) {
@@ -866,6 +1034,9 @@ function renderTimeboard() {
   const tb = $('timeboard');
   tb.innerHTML = '';
   const total = S.meta.lastSpace + 1;
+  // 魔改版在时间板上多埋了 3 个混沌格（位置由服务端 rules 带过来），
+  // 这些格子在 TIME_BOARD 表里是 'normal'，得单独套一层标记。
+  const chaosSpaces = (st.rules && st.rules.chaosSpaces) || [];
   for (let n = 0; n < total; n += 1) {
     const cell = document.createElement('div');
     let cls = 'tb-cell';
@@ -876,6 +1047,7 @@ function renderTimeboard() {
       if (st.leatherClaimed[n]) cls += ' claimed';
     }
     if (n === S.meta.lastSpace) cls += ' end';
+    if (chaosSpaces.indexOf(n) >= 0) cls += ' chaos';
     cell.className = cls;
 
     st.players.forEach((p, i) => {
@@ -1032,7 +1204,9 @@ function renderActionbar() {
   // 只剩跳过可做的时候，把这个按钮放大高亮 —— 这一步最容易忘
   const adv = $('btnAdvance');
   adv.classList.toggle('only-option', onlySkip);
-  adv.title = onlySkip ? '三块补丁一块都买不起，只能跳过领纽扣' : '';
+  // 可见块数经典 3 块、魔改 4 块，文案跟着走，别再写死「三块」
+  const visCount = ((st.visible || []).length) || 3;
+  adv.title = onlySkip ? visCount + ' 块补丁一块都买不起，只能跳过领纽扣' : '';
 
   // 上一条短暂提示（"这里放不下"之类）有时效，过期就清掉
   if (S.hintUntil && Date.now() > S.hintUntil) { S.hintText = null; S.hintUntil = 0; }
@@ -1073,7 +1247,7 @@ function renderActionbar() {
     $('btnConfirm').disabled = !(myTurn && S.locked && valid);
     $('btnAdvance').disabled = !myTurn;
   } else if (onlySkip) {
-    $('selInfo').innerHTML = '<b>三块补丁一块都买不起</b>，只能跳过领纽扣';
+    $('selInfo').innerHTML = '<b>' + (((S.state.visible || []).length) || 3) + ' 块补丁一块都买不起</b>，只能跳过领纽扣';
     $('btnRotate').disabled = true;
     $('btnFlip').disabled = true;
     $('btnConfirm').disabled = true;
@@ -1103,6 +1277,7 @@ function clearHint() {
 
 /** 操作条上短暂显示一句提示，不写进日志 */
 function flashHint(text, ms = 1600) {
+  SFX.play('error');   // 「放不下」「先选个位置」这类驳回，配一声钝响
   S.hintText = escapeHtml(text);
   S.hintUntil = Date.now() + ms;
   renderActionbar();
@@ -1151,7 +1326,21 @@ function renderWait() {
 /* ---------------- 结算 ---------------- */
 function renderResult() {
   const st = S.state;
-  if (st.phase !== 'over' || !st.result) { $('overlay').classList.remove('show'); return; }
+  if (st.phase !== 'over' || !st.result) {
+    $('overlay').classList.remove('show');
+    S.resultAnnounced = false;
+    return;
+  }
+  // 结算只播一次音：render() 会被各种原因反复调用，
+  // 不拦住的话每重绘一次就重奏一段胜利进行曲。
+  if (!S.resultAnnounced) {
+    S.resultAnnounced = true;
+    const w = st.result.winner;
+    const mine = st.local ? null : S.seat;
+    if (w === null) SFX.play('turn');
+    else if (st.local ? true : w === mine) SFX.play('win');
+    else SFX.play('lose');
+  }
   showResult(st.result);
 }
 
@@ -1184,12 +1373,15 @@ function showResult(result) {
     </tr>`;
   }).join('');
 
+  const r = (st.rules || {});
+  const bonusPts = r.bonusBonus || 7;
+  const penaltyPts = r.emptyPenalty || 2;
   $('ovBody').innerHTML =
     `<table class="score-table">
       <thead><tr><th></th><th>玩家</th><th>纽扣</th><th>7×7</th><th>空格</th><th>总分</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
-    <p class="score-note">最终得分 ＝ 剩余纽扣 ＋ 7×7 奖励 − 空格数 × 2。同分时先抵达终点者胜。</p>`;
+    <p class="score-note">最终得分 ＝ 剩余纽扣 ＋ 7×7 奖励（+${bonusPts}） − 空格数 × ${penaltyPts}。同分时先抵达终点者胜。</p>`;
 
   const need = st.local ? 0 : st.seats.filter(Boolean).length;
   const ov = $('overlay');
@@ -1282,6 +1474,7 @@ function onCellClick(r, c, seat) {
   clearHint();
   S.locked = anchor;
   S.hover = { row: r, col: c };
+  SFX.play('click');   // 落点被钉住的那一下，给个手感
   render(S.state);
 }
 
@@ -1342,6 +1535,7 @@ function rotate() {
   if (!S.selected || !canAct()) return;
   const patch = S.meta.patches.find((p) => p.id === S.selected.patchId);
   S.oriIndex = (S.oriIndex + 1) % patch.orientations.length;
+  SFX.play('click');
   dropLockIfInvalid();
   render(S.state);
 }
@@ -1352,6 +1546,7 @@ function flip() {
   // 朝向数组前 4 个是旋转、后 4 个是镜像，只有手性补丁才镜像得出新形状
   if (patch.orientations.length >= 8) {
     S.oriIndex = (S.oriIndex + 4) % patch.orientations.length;
+    SFX.play('click');
     dropLockIfInvalid();
     render(S.state);
   } else {
@@ -1452,8 +1647,20 @@ function escapeHtml(s) {
 /* ---------------- 更新日志 ---------------- */
 const CHANGELOG = [
   {
-    v: 'v1.4.1',
+    v: 'v1.5',
     date: '当前',
+    items: [
+      '<b>魔改版 · 混沌拼布</b>（主菜单新增入口，单机与联机都有）：规则被整套换掉 —— <b>0 纽扣起步</b>、前方 <b>4 选 1</b>、补丁池每局只抽 <b>26 块</b>、7×7 奖励翻倍成 <b>+14</b>、每空一格罚 <b>3 分</b>。时间板上还多埋了 <b>3 个混沌格</b>（12 / 30 / 48 格），踩到就随机发牌：<b>天赐</b>白拿 6 纽扣、<b>苛捐</b>扣 4 纽扣、<b>命运交换</b>跟纽扣最多的对手对调口袋、<b>时间跃迁</b>额外冲两格。',
+      '<b>音效</b>：买补丁、跳过、收纽扣、轮到你、混沌格、终局胜负…… 都有声了。全部是现场合成的，没有引入任何音频文件，双击 bat 就能玩这一点没变。主菜单右上角和对局页顶栏各有一个开关，<b>每个界面都能开关</b>，改一处两处一起变，选择记在本地下次还生效。',
+      '<b>双人局默认就是「绕拼布板」</b>：以前进来是圆环，要自己去点开关才换成看得清的那种。现在默认就是它，轨迹和补丁一起放大了 —— 补丁格子从 8px 提到 <b>10px</b>（最大那块 54px），轨道空带从 56px 加到 <b>66~94px</b>，中间那列同步收窄把地方让出来，两块拼布板的大小基本没缩水。',
+      '<b>中立指示物变成一个棋子了</b>，而且挪到了<b>拼布板上方那条轨道</b>上：圆角矩形的起点从「下边正中」移到「上边正中」，棋子就停在第一块可选补丁的左边 —— 不再挤在两块板中间那道缝里，也压不到任何一块补丁。',
+      '<b>主菜单重做</b>：标题做成艺术字（渐变 + 描边的纯 CSS 效果）；<b>单机与联机两块左右并排</b>，每块里都同时摆着经典版和魔改版的入口，想玩哪种一眼就能找到。',
+      '<b>魔改版的说明是照着服务端数值生成的</b>，不再是写死在页面上的文字 —— 以后调平衡改一处即可。',
+    ],
+  },
+  {
+    v: 'v1.4.1',
+    date: '上一版',
     items: [
       '<b>双人局多了一种环绕方式：绕拼布板</b>。补丁环不再只是那个圆 —— 现在整个环从圆变成贴着两块拼布板的<b>圆角矩形</b>，补丁沿四条边等距摊开、<b>全部正着放、一样大</b>，所以每一块都看得清清楚楚，再没有「缩成一个小点」的角落。在棋盘标题右边那个「环绕时间板 / 绕拼布板」开关里切，<b>只影响自己这块屏幕</b>。',
       '<b>可以选的补丁被标出来了</b>。中立指示物前方那 3 块，在环上／框上都会加一圈金色描边；<b>买得起的那几块还能直接点</b>，点一下就跟点下方那张大卡片一样进入落点预览。买不起的只画一圈细虚线，告诉你「轮到它们了」但不给点。',
@@ -1465,7 +1672,7 @@ const CHANGELOG = [
   },
   {
     v: 'v1.4',
-    date: '上一版',
+    date: '更早',
     items: [
       '<b>补丁环不再单独挂在边上，而是把时间板整个包进环心</b>：环当外圈、时间板缩成圆心那块棋盘，两者合成一块「棋盘」。买走一块补丁，中立指示物沿环前移一格，整圈平滑地转过去。',
       '<b>时间板改成 9 列 × 6 行</b>，正好 54 格，一格不剩不空。格子仍然是 26px，比原来还大一点，数字更好认。',
@@ -1537,33 +1744,55 @@ function createRoom(payload) {
   const name = readName('玩家一');
   rememberName(name);
   setMenuMsg('');
+  SFX.play('click');
   connect(null, () => send(Object.assign({ type: 'create', name }, payload)));
 }
 
-$('btnSolo').onclick = () => {
-  createRoom({ mode: 'solo', level: $('botLevel').value });
-};
+/**
+ * 主菜单上所有「开一局」的按钮都走这一条，靠 data-* 说明自己是谁：
+ *   data-mode    solo | local | online
+ *   data-variant classic | chaos
+ * 加一种玩法只需要在 HTML 里再摆一个 <button>，不用往 JS 里再塞一份绑定。
+ */
+function startFromButton(btn) {
+  const mode = btn.dataset.mode;
+  const variant = btn.dataset.variant || 'classic';
+  if (mode === 'local') {
+    const name = readName('玩家一');
+    const name2 = (window.prompt('第二位玩家的名字', '玩家二') || '').trim() || '玩家二';
+    rememberName(name);
+    setMenuMsg('');
+    SFX.play('click');
+    connect(null, () => send({ type: 'create', name, name2, mode: 'local', variant }));
+    return;
+  }
+  const payload = { mode, variant };
+  if (mode === 'online') payload.capacity = Number($('playerCount').value) || 2;
+  else payload.level = $('botLevel').value;
+  createRoom(payload);
+}
 
-$('btnLocal').onclick = () => {
-  const name = readName('玩家一');
-  const name2 = (window.prompt('第二位玩家的名字', '玩家二') || '').trim() || '玩家二';
-  rememberName(name);
-  setMenuMsg('');
-  connect(null, () => send({ type: 'create', name, name2, mode: 'local' }));
-};
-
-$('btnCreate').onclick = () => {
-  createRoom({ mode: 'online', capacity: Number($('playerCount').value) || 2 });
-};
+Array.from(document.querySelectorAll('[data-mode]')).forEach((btn) => {
+  btn.onclick = () => startFromButton(btn);
+});
 
 $('btnJoin').onclick = () => {
   const name = readName('玩家二');
   const room = ($('roomCode').value || '').trim().toUpperCase();
-  if (!room) { setMenuMsg('请先填房间码', false); return; }
+  if (!room) { setMenuMsg('请先填房间码', false); SFX.play('error'); return; }
   rememberName(name);
   setMenuMsg('');
+  SFX.play('click');
   connect(null, () => send({ type: 'join', name, room }));
 };
+
+// 音效开关：主菜单和对局页各一个，两处永远同步
+Array.from(document.querySelectorAll('[data-sfx-toggle]')).forEach((btn) => {
+  btn.onclick = () => {
+    const on = setSfx(!SFX.on);
+    if (on) SFX.play('click');   // 打开的那一下给个即时反馈，好确认真的响了
+  };
+});
 
 $('roomCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnJoin').click(); });
 $('playerName').addEventListener('keydown', (e) => {
@@ -1675,6 +1904,32 @@ window.__pw = {
   get hover() { return S.hover; },
   /** 当前环绕方式：'ring' | 'frame' */
   get layout() { return S.layout; },
+  /** 本局规则变体：'classic' | 'chaos' */
+  get variant() { return S.variant; },
+  /** 音效是否开着 */
+  get sfxOn() { return SFX.on; },
+  /** 当前生效的规则数值（经典/魔改），等待房时是 null */
+  get rules() { return (S.state && S.state.rules) || null; },
+  /** 中立棋子的实时位置（相对舞台中心），测「它到底在不在上方」用 */
+  neutralPos() {
+    const tok = $('ringNeutral');
+    if (!tok || tok.hidden) return null;
+    const host = tok.parentNode;
+    if (!host) return null;
+    const b = tok.getBoundingClientRect();
+    const hb = host.getBoundingClientRect();
+    return {
+      cx: b.left + b.width / 2,
+      cy: b.top + b.height / 2,
+      w: b.width,
+      h: b.height,
+      // 相对宿主舞台中心的偏移：y 为负表示在上半部分
+      dx: b.left + b.width / 2 - (hb.left + hb.width / 2),
+      dy: b.top + b.height / 2 - (hb.top + hb.height / 2),
+      hostH: hb.height,
+      label: tok.getAttribute('title') || '',
+    };
+  },
   /** 「绕拼布板」布局下舞台与补丁的实际几何，给联调脚本量尺寸用 */
   frameGeom() {
     const frame = $('frameStage');
@@ -1712,10 +1967,20 @@ async function boot() {
   const saved = localStorage.getItem('pwName');
   if (saved) $('playerName').value = saved;
 
-  // 环绕方式是个人的观感偏好，跟着浏览器留着
+  // 环绕方式是个人的观感偏好，跟着浏览器留着。
+  // v1.5 起默认「绕拼布板」：双人局一进来就是补丁最大的那种摆法；
+  // 想切回圆环点一下标题右边的开关就行，切过之后按你的选择记着。
   try {
-    if (localStorage.getItem('pwLayout') === 'frame') S.layout = 'frame';
+    if (localStorage.getItem('pwLayout') === 'ring') S.layout = 'ring';
   } catch (e) { /* 忽略 */ }
+
+  // 音效开关同样记在本地。默认开，明确存过 '0' 才算关。
+  try {
+    if (localStorage.getItem('pwSfx') === '0') SFX.on = false;
+  } catch (e) { /* 忽略 */ }
+  setSfx(SFX.on, false);
+  // 浏览器在用户真正点过页面之前不许出声，所以第一次点击时补一次 resume
+  document.addEventListener('pointerdown', () => SFX.ensure(), { once: true });
 
   const sel = $('playerCount');
   for (let i = 2; i <= 6; i += 1) {
@@ -1727,11 +1992,33 @@ async function boot() {
   sel.value = '2';
 
   renderChangelog();
+  renderVariantHints();
 
   const res = await fetch('/api/info');
   S.meta = await res.json();
   renderNetHint();
+  renderVariantHints();
   autoJoinIfRequested();
+}
+
+/**
+ * 主菜单那两张「魔改版」卡片下面的小字，按服务端真正的数值写。
+ * 以前这种说明都是硬编码在 HTML 里的，改一次规则就得改两处、还容易忘。
+ */
+function renderVariantHints() {
+  const v = S.meta && S.meta.variants && S.meta.variants.chaos;
+  if (!v) return;
+  const ev = (S.meta && S.meta.chaosEvents) || {};
+  Array.from(document.querySelectorAll('[data-chaos-hint]')).forEach((el) => {
+    el.textContent = `${v.startButtons} 纽扣起步 · 前方 ${v.marketVisible} 选 1 · ` +
+      `${v.chaosSpaces.length} 个混沌格 · 7×7 奖励 +${v.bonusBonus}`;
+  });
+  const evEl = $('chaosEventHint');
+  if (evEl) {
+    evEl.innerHTML =
+      `<b>天赐</b> 白拿 ${ev.bonus} 纽扣 · <b>苛捐</b> 扣 ${ev.toll} 纽扣 · ` +
+      `<b>命运交换</b> 与纽扣最多的对手对调 · <b>时间跃迁</b> 额外前进 ${ev.leap} 格`;
+  }
 }
 
 /**

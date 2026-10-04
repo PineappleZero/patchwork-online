@@ -1,9 +1,11 @@
 'use strict';
 
 /*
- * v1.4.1 界面联调：用 CDP 驱动本机 Edge，逐屏截图并断言关键布局。
- * 覆盖：主菜单（含联机网址）/ 人机对战 / 补丁环包住时间板 / 绕拼布板的圆角矩形环绕 /
- *       可选补丁的标注与点选 / 跳过按钮高亮 / 事件纪要滚动 / 更新日志 / 六人联机。
+ * v1.5 界面联调：用 CDP 驱动本机 Edge，逐屏截图并断言关键布局。
+ * 覆盖：主菜单（左右并排 + 艺术字 + 联机网址）/ 音效开关 / 人机对战 /
+ *       双人默认「绕拼布板」的放大轨道与中立棋子 / 补丁环包住时间板 /
+ *       可选补丁的标注与点选 / 魔改版混沌拼布 / 跳过按钮高亮 / 事件纪要滚动 /
+ *       更新日志 / 六人联机。
  *
  * 用两个 Edge 实例：A 跑单机部分，B 跑联机部分。
  * 因为「返回主菜单」会整页重载，而 localStorage 里还存着上一局的座位，
@@ -115,16 +117,31 @@ function ok(cond, label, extra) {
       const ids = ['playerName','btnSolo','btnLocal','botLevel','playerCount','btnCreate','roomCode','btnJoin','btnRulesMenu','btnChangelog'];
       const missing = ids.filter((id) => !q('#' + id));
       const rect = q('.menu-card').getBoundingClientRect();
+      const titleEl = q('.title');
       return {
         missing,
         cards: document.querySelectorAll('.mode-card').length,
+        classicCards: document.querySelectorAll('.mode-card[data-variant="classic"]').length,
+        chaosCards: document.querySelectorAll('.mode-card.chaos').length,
+        menuGridCols: getComputedStyle(q('.menu-grid')).gridTemplateColumns.split(' ').length,
+        sfxToggles: document.querySelectorAll('[data-sfx-toggle]').length,
+        // 艺术字：标题的填充被裁到文字里，且没有文字色 —— 两者同时成立才算真做了
+        artClip: (getComputedStyle(titleEl).webkitBackgroundClip || getComputedStyle(titleEl).backgroundClip),
+        artColor: getComputedStyle(titleEl).color,
         counts: Array.from(document.querySelectorAll('#playerCount option')).map((o) => o.value),
         visible: rect.top >= -2 && rect.bottom <= window.innerHeight + 2,
         h: Math.round(rect.height), vh: window.innerHeight,
       };
     })()`);
     ok(menu.missing.length === 0, '菜单控件齐全', '缺 ' + JSON.stringify(menu.missing));
-    ok(menu.cards === 2, '单机有两个模式入口', '实际 ' + menu.cards);
+    ok(menu.cards === 6, '经典与魔改 × 单机与联机，一共 6 个开局入口', '实际 ' + menu.cards);
+    ok(menu.classicCards === 3 && menu.chaosCards === 3,
+      '经典版 3 个（人机 + 同机 + 联机），魔改版也 3 个',
+      `经典 ${menu.classicCards} / 魔改 ${menu.chaosCards}`);
+    ok(menu.menuGridCols === 2, '单机与联机两块左右并排', menu.menuGridCols + ' 列');
+    ok(menu.sfxToggles === 2, '主菜单和对局页各有一个音效开关', '实际 ' + menu.sfxToggles);
+    ok(menu.artClip === 'text' && /rgba\(0, 0, 0, 0\)|transparent/.test(menu.artColor),
+      '标题是渐变艺术字（填充裁到文字里）', menu.artClip + ' / ' + menu.artColor);
     ok(menu.counts.join(',') === '2,3,4,5,6', '人数可选 2~6', menu.counts.join(','));
     ok(menu.visible, '菜单整卡在视口内', `高 ${menu.h} / 视口 ${menu.vh}`);
 
@@ -174,7 +191,56 @@ function ok(cond, label, extra) {
     ok(solo.mode === '人机对战', '模式标签正确', solo.mode);
     ok(solo.copyHidden, '单机模式隐藏「复制邀请」');
 
+    console.log('\n[2a] 双人局默认「绕拼布板」，轨道和补丁都放大了（v1.5）');
+    const def = await evaluate(ws, `(function(){
+      const g = window.__pw.frameGeom();
+      const sw = document.getElementById('layoutSwitch');
+      const onBtn = sw.querySelector('button.on');
+      const tok = window.__pw.neutralPos();
+      const stage = document.getElementById('frameStage');
+      const sr = stage.getBoundingClientRect();
+      const far = document.getElementById('ringFar');
+      const tile = parseFloat(getComputedStyle(far).getPropertyValue('--rc-tile'));
+      const players = document.getElementById('playersWrap');
+      const cs = getComputedStyle(players);
+      return {
+        layout: window.__pw.layout,
+        stageHidden: stage.hidden,
+        switchOn: onBtn ? onBtn.dataset.layout : '',
+        tile: tile,
+        widestW: g ? Math.round(Math.max.apply(null, g.chips.map((c) => c.w))) : 0,
+        widestH: g ? Math.round(Math.max.apply(null, g.chips.map((c) => c.h))) : 0,
+        chipCount: g ? g.chips.length : 0,
+        // 环绕轨道＝.players 让出来的那条空带，就是它的内边距
+        band: Math.round(parseFloat(cs.paddingTop)),
+        frameW: Math.round(sr.width),
+        frameH: Math.round(sr.height),
+        tok: tok,
+        tokAboveMid: tok ? tok.cy < sr.top + sr.height / 2 : false,
+        tokInTopQuarter: tok ? (tok.cy - sr.top) < sr.height * 0.25 : false,
+      };
+    })()`);
+    ok(def.layout === 'frame' && !def.stageHidden,
+      '双人局一进来就是「绕拼布板」，不用手动切', def.layout);
+    ok(def.switchOn === 'frame', '环绕开关也停在「绕拼布板」那一档', def.switchOn);
+    ok(def.tile >= 10, '框上补丁的格子放大到 10px 一档', def.tile + 'px');
+    ok(def.widestW >= 50, '最大那块补丁有 50px 以上宽，隔远也认得出',
+      `${def.widestW}×${def.widestH}px`);
+    ok(def.band >= 66, '环绕轨道（空带）比上一版宽了一截', def.band + 'px');
+    ok(def.frameW >= 900, '环绕舞台跟着变宽了', `${def.frameW}×${def.frameH}`);
+    ok(def.chipCount >= 20, '补丁一批都摆上来了', '实际 ' + def.chipCount + ' 块');
+    ok(def.tok && def.tok.w >= 14 && def.tok.w <= 24,
+      '中立指示物变成一枚棋子（圆片），不再是文字胶囊',
+      def.tok ? `${Math.round(def.tok.w)}×${Math.round(def.tok.h)}px「${def.tok.label}」` : 'no-token');
+    ok(def.tokAboveMid && def.tokInTopQuarter,
+      '棋子落在拼布板上方的轨道上，不在下面',
+      def.tok ? `相对舞台中心 dy=${Math.round(def.tok.dy)}px（舞台高 ${Math.round(def.tok.hostH)}）` : '-');
+    await screenshot(ws, 'v15-2-frame-default.png');
+
     console.log('\n[2b] 补丁环包住时间板（v1.4 的主角）');
+    // v1.5 起双人局默认是「绕拼布板」，这一节验的是圆环，先切回去
+    await evaluate(ws, `document.querySelector('#layoutSwitch button[data-layout="ring"]').click()`);
+    await sleep(700);
     const ring = await evaluate(ws, `(function(){
       const st = window.__pw.state;
       const stage = document.getElementById('ringStage');
@@ -333,7 +399,7 @@ function ok(cond, label, extra) {
       '正面前 3 块被标注出来，买得起的那几块可以点',
       `标注 ${frame.option} 块，可点 ${frame.selectable} 块`);
     ok(frame.markedInOneRow && frame.markedSpread > 40,
-      '那 3 块在下边排成一行、彼此拉开，看得清也点得着', `间距 ${frame.markedSpread}px`);
+      '那 3 块沿上边排成一行、彼此拉开，看得清也点得着', `间距 ${frame.markedSpread}px`);
     ok(frame.cardsInside, '两块拼布板都落在圆角矩形里面');
     ok(frame.overlapped === 0, '补丁没压到拼布板上', `压住 ${frame.overlapped} 个`);
     ok(frame.tbCols === 9 && frame.tbCells === 54, '时间板照旧 9 列 54 格，没被换布局弄坏');
@@ -370,6 +436,12 @@ function ok(cond, label, extra) {
     ok(back.farInStage && back.chips === back.N - 3,
       '补丁搬回环上，正面前 3 块又交回给大卡片',
       `chips=${back.chips} N=${back.N}`);
+
+    // 这一节验完了，把偏好切回默认档 —— 后面的用例（跳过高亮、日志、魔改局）
+    // 都按「双人默认绕拼布板」这个前提走，别被这里的临时切换带偏。
+    await evaluate(ws, `document.querySelector('#layoutSwitch button[data-layout="frame"]').click()`);
+    await sleep(500);
+    ok(await evaluate(ws, `window.__pw.layout === 'frame'`), '收尾切回默认的「绕拼布板」');
 
     console.log('\n[2c] 只剩跳过时，「跳过领纽扣」会跳出来');
     // 分三步：先把纽扣清零并重绘，等放大动画跑完再读样式，最后恢复原状。
@@ -473,11 +545,142 @@ function ok(cond, label, extra) {
     })()`);
     ok(cl.show, '更新日志弹层能打开');
     ok(cl.vers >= 3, '包含 3 个及以上版本', '实际 ' + cl.vers);
-    ok(cl.first.indexOf('v1.4.1') === 0, '首条是 v1.4.1', cl.first);
-    ok(cl.items >= 5, 'v1.4.1 条目不少于 5 条', '实际 ' + cl.items);
-    ok(cl.versions.slice(0, 3).join(',') === 'v1.4.1,v1.4,v1.3',
+    ok(cl.first.indexOf('v1.5') === 0, '首条是 v1.5', cl.first);
+    ok(cl.items >= 6, 'v1.5 条目不少于 6 条', '实际 ' + cl.items);
+    ok(cl.versions.slice(0, 4).join(',') === 'v1.5,v1.4.1,v1.4,v1.3',
       '版本号是连续的（含补记的 1.1）', cl.versions.join(' / '));
-    await screenshot(ws, 'v141-2-changelog.png');
+    await screenshot(ws, 'v15-3-changelog.png');
+
+    console.log('\n[4b] 音效开关：每个界面都能开关');
+    await evaluate(ws, `document.getElementById('btnChangelogClose').click()`);
+    await sleep(200);
+    const sfx1 = await evaluate(ws, `(function(){
+      const btns = Array.from(document.querySelectorAll('[data-sfx-toggle]'));
+      return {
+        count: btns.length,
+        ids: btns.map((b) => b.id).join(','),
+        text: btns.map((b) => b.querySelector('.sfx-txt').textContent),
+        on: window.__pw.sfxOn,
+      };
+    })()`);
+    ok(sfx1.count === 2, '主菜单和对局页各有一个音效开关', sfx1.ids);
+    ok(sfx1.on === true && sfx1.text.every((t) => t === '音效开'),
+      '默认是开着的', sfx1.text.join(' / '));
+
+    await evaluate(ws, `document.getElementById('btnSfxGame').click()`);
+    await sleep(200);
+    const sfx2 = await evaluate(ws, `(function(){
+      const btns = Array.from(document.querySelectorAll('[data-sfx-toggle]'));
+      return {
+        on: window.__pw.sfxOn,
+        stored: localStorage.getItem('pwSfx'),
+        off: btns.map((b) => b.classList.contains('off')),
+        pressed: btns.map((b) => b.getAttribute('aria-pressed')),
+        text: btns.map((b) => b.querySelector('.sfx-txt').textContent),
+      };
+    })()`);
+    ok(sfx2.on === false && sfx2.stored === '0', '关上以后记进了本地', JSON.stringify(sfx2));
+    ok(sfx2.off.every(Boolean) && sfx2.pressed.every((v) => v === 'false') &&
+      sfx2.text.every((t) => t === '音效关'), '两处开关一起变成「音效关」');
+
+    await evaluate(ws, `document.getElementById('btnSfxMenu').click()`);
+    await sleep(200);
+    const sfx3 = await evaluate(ws, `(function(){
+      const btns = Array.from(document.querySelectorAll('[data-sfx-toggle]'));
+      return {
+        on: window.__pw.sfxOn,
+        stored: localStorage.getItem('pwSfx'),
+        off: btns.map((b) => b.classList.contains('off')),
+      };
+    })()`);
+    ok(sfx3.on === true && sfx3.stored === '1' && sfx3.off.every((v) => v === false),
+      '用主菜单那个开关也能打开，两处仍然同步');
+
+    console.log('\n[4c] 魔改版 · 混沌拼布（v1.5 的主角）');
+    // 「返回主菜单」会整页重载，重载前先把 confirm 放行，否则对局中离开会被拦下
+    await evaluate(ws, `(function(){
+      window.confirm = function(){ return true; };
+      document.getElementById('btnBack').click();
+      return 'ok';
+    })()`);
+    await waitFor(ws, `document.getElementById('menu').classList.contains('active')`, 12000, '回到主菜单');
+    await sleep(700);
+    const chaosMenu = await evaluate(ws, `(function(){
+      const b = document.querySelector('.mode-card.chaos[data-mode="solo"][data-variant="chaos"]');
+      const hint = document.querySelector('[data-chaos-hint]');
+      const grid = document.querySelector('.menu-grid');
+      const gs = getComputedStyle(grid);
+      return {
+        hasButton: !!b,
+        buttonText: b ? b.querySelector('b').textContent : '',
+        hint: hint ? hint.textContent : '',
+        chaosCards: document.querySelectorAll('.mode-card.chaos').length,
+        gridCols: gs.gridTemplateColumns.split(' ').length,
+        colW: Math.round(grid.getBoundingClientRect().width),
+        sfxOn: window.__pw.sfxOn,
+      storedSfx: localStorage.getItem('pwSfx'),
+      };
+    })()`);
+    ok(chaosMenu.hasButton, '主菜单上有魔改版的人机入口', chaosMenu.buttonText);
+    ok(chaosMenu.chaosCards === 3, '魔改版在单机与联机两栏里都摆了入口',
+      '魔改入口 ' + chaosMenu.chaosCards + ' 个');
+    ok(chaosMenu.gridCols === 2, '单机与联机确实左右并排', chaosMenu.gridCols + ' 列');
+    ok(/\d 纽扣起步/.test(chaosMenu.hint),
+      '魔改版的说明是照服务端数值生成的，不是写死的', chaosMenu.hint);
+    ok(chaosMenu.sfxOn === true && chaosMenu.storedSfx === '1',
+      '整页重载后音效设置照旧生效（跟着本地存储走）', chaosMenu.storedSfx);
+    await screenshot(ws, 'v15-1-menu.png');
+
+    await evaluate(ws, `document.querySelector('.mode-card.chaos[data-mode="solo"][data-variant="chaos"]').click()`);
+    await waitFor(ws, `document.getElementById('game').classList.contains('active')`, 8000, '进入魔改对局');
+    await waitFor(ws, `document.querySelectorAll('#playersWrap .player-card').length === 2`, 8000, '两张玩家卡');
+    await sleep(1800);
+    const chaos = await evaluate(ws, `(function(){
+      const st = window.__pw.state;
+      const tb = document.getElementById('timeboard');
+      const kids = Array.from(tb.children);
+      const chaosCells = kids.filter((c) => c.classList.contains('chaos'));
+      const front = document.getElementById('ringFront');
+      const far = document.getElementById('ringFar');
+      return {
+        variant: window.__pw.variant,
+        modeTag: document.getElementById('modeTag').textContent,
+        modeTagChaos: document.getElementById('modeTag').classList.contains('chaos'),
+        rules: window.__pw.rules,
+        visible: st.visible.length,
+        N: st.circle.length,
+        chaosCells: chaosCells.length,
+        chaosIdx: chaosCells.map((c) => kids.indexOf(c)).join(','),
+        frontCards: front.children.length,
+        frontCols: getComputedStyle(front).gridTemplateColumns.split(' ').length,
+        layout: window.__pw.layout,
+        chipCount: far.children.length,
+        boxChaos: !!document.getElementById('boardWrap').dataset.variant &&
+          document.getElementById('boardWrap').dataset.variant === 'chaos',
+      };
+    })()`);
+    ok(chaos.variant === 'chaos', '这一局确实是魔改版', chaos.variant);
+    ok(chaos.modeTag.indexOf('魔改') >= 0 && chaos.modeTagChaos,
+      '顶栏模式标签挂上了「魔改」', chaos.modeTag);
+    ok(chaos.rules && chaos.rules.startButtons === 0, '魔改版开局 0 纽扣',
+      JSON.stringify(chaos.rules && chaos.rules.startButtons));
+    ok(chaos.rules.bonusBonus === 14 && chaos.rules.emptyPenalty === 3,
+      '7×7 奖励 ×2、空格罚分 +1 这些数值也随变体变',
+      `bonus=${chaos.rules.bonusBonus} penalty=${chaos.rules.emptyPenalty}`);
+    ok(chaos.visible === 4 && chaos.frontCards === 4 && chaos.frontCols === 4,
+      '前方能看到 4 块，下方也排成 4 张卡片',
+      `visible=${chaos.visible} cards=${chaos.frontCards} cols=${chaos.frontCols}`);
+    ok(chaos.N === 26, '补丁环只抽了 26 块', chaos.N + ' 块');
+    // 绕拼布板时框上把每一块都画出来；圆环时正面那几块交给下方卡片，环上不重复画。
+    // 魔改版正面是 4 块，但环上只跳过前 3 个名次，所以环上剩 N − 3。
+    const expectChips = chaos.layout === 'frame' ? chaos.N : chaos.N - 3;
+    ok(chaos.layout === 'frame', '双人局默认仍是「绕拼布板」', chaos.layout);
+    ok(chaos.chipCount === expectChips,
+      '框上／环上的补丁数与布局规则吻合', `${chaos.chipCount} vs ${expectChips}`);
+    ok(chaos.chaosCells === 3 && chaos.chaosIdx === '12,30,48',
+      '时间板上多出 3 个混沌格，落在第 12 / 30 / 48 格', chaos.chaosIdx);
+    ok(chaos.boxChaos, '对局区也标了变体，方便样式区分');
+    await screenshot(ws, 'v15-4-chaos.png');
 
     /* ================= B：联机部分 ================= */
     const wsb = edgeB.ws;

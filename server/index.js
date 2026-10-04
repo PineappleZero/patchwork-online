@@ -17,7 +17,7 @@ const path = require('path');
 const crypto = require('crypto');
 const engine = require('./engine');
 const ai = require('./ai');
-const { PATCHES, LEATHER, TIME_BOARD, LEATHER_SPACES, INCOME_SPACES, BOARD_SIZE, LAST_SPACE } = require('./data');
+const { PATCHES, LEATHER, TIME_BOARD, LEATHER_SPACES, INCOME_SPACES, BOARD_SIZE, LAST_SPACE, VARIANTS, CHAOS_EVENTS } = require('./data');
 
 const PORT = Number(process.env.PORT || 3178);
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -214,6 +214,9 @@ function createRoom(opts) {
   const room = {
     code: makeRoomCode(),
     mode,
+    // 规则变体：'classic' 原版 / 'chaos' 魔改。和 mode 是两条互相独立的轴，
+    // 所以「魔改版的人机」「魔改版的联机」都只是换这一个字段。
+    variant: VARIANTS[opts.variant] ? opts.variant : 'classic',
     capacity,
     local: def.local,
     slots: mode === 'online' ? capacity : def.slots,
@@ -256,7 +259,7 @@ function startGame(room) {
     }
   }
   room.playerNames = list.map((x) => x.name);
-  room.state = engine.createGame(list);
+  room.state = engine.createGame(list, Math.random, { variant: room.variant });
   room.history = [];
   room.rematchVotes.clear();
   room.cursors = {};
@@ -267,7 +270,11 @@ function startGame(room) {
 function newRound(room) {
   const wasBot = new Set(room.botSeats);
   room.botSeats = wasBot;
-  room.state = engine.createGame(room.playerNames.map((n, i) => ({ name: n, bot: wasBot.has(i) })));
+  room.state = engine.createGame(
+    room.playerNames.map((n, i) => ({ name: n, bot: wasBot.has(i) })),
+    Math.random,
+    { variant: room.variant },
+  );
   room.history = [];
   room.rematchVotes.clear();
   room.cursors = {};
@@ -300,6 +307,7 @@ function serialize(room) {
     type: 'state',
     room: room.code,
     mode: room.mode,
+    variant: room.variant,
     local: room.local,
     capacity: room.capacity,
     slots: room.slots,
@@ -333,6 +341,8 @@ function serialize(room) {
       empty: engine.emptySpaces(p.board),
     })) : [],
     bonusTileOwner: st ? st.bonusTileOwner : null,
+    /** 这一局生效的规则（经典/魔改的数值全在这儿，前端照着渲染「魔改」标记与混沌格） */
+    rules: st ? st.rules : null,
     result: st && over ? engine.finalResult(st) : null,
     lastEvents: st ? st.lastEvents || [] : [],
     /** 对局事件流水（中途加入的人用它补齐日志） */
@@ -589,6 +599,11 @@ const server = http.createServer((req, res) => {
       incomeSpaces: INCOME_SPACES,
       boardSize: BOARD_SIZE,
       lastSpace: LAST_SPACE,
+      // 两种规则变体的数值：主菜单的「魔改版」卡片直接照着它写说明，
+      // 规则弹层也不用再抄一遍数字。
+      variants: VARIANTS,
+      chaosEvents: CHAOS_EVENTS,
+      defaultVariant: 'classic',
       rooms: rooms.size,
       port: PORT,
       localUrl: `http://localhost:${PORT}`,
@@ -635,13 +650,14 @@ server.on('upgrade', (req, socket) => {
       try { msg = JSON.parse(text); } catch (e) { return; }
 
       if (msg.type === 'create') {
-        room = createRoom({ mode: msg.mode, capacity: msg.capacity, level: msg.level });
+        room = createRoom({ mode: msg.mode, capacity: msg.capacity, level: msg.level, variant: msg.variant });
         seatIndex = 0;
         const name = cleanName(msg.name, '玩家一');
         room.seats[0] = { name, token: makeToken(), socket, connected: true };
         send(socket, {
           type: 'joined', room: room.code, seat: 0,
           token: room.seats[0].token, mode: room.mode, local: room.local,
+          variant: room.variant,
         });
         if (room.mode !== 'online') {
           // 单机两种模式：建完房直接开局，不用等人
@@ -699,6 +715,7 @@ server.on('upgrade', (req, socket) => {
         send(socket, {
           type: 'joined', room: room.code, seat,
           token: room.seats[seat].token, mode: room.mode, local: room.local,
+          variant: room.variant,
         });
         broadcast(room);
         maybeRunBot(room);
