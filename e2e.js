@@ -131,7 +131,6 @@ function neighborScore(board, ori, row, col) {
 /** 挑一步动作：买估值最高的补丁（含最佳朝向与落点），或者前进领纽扣 */
 function chooseAction(state, seat) {
   const me = state.players[seat];
-  const other = state.players[1 - seat];
   let best = null;
 
   for (const pid of state.visible) {
@@ -151,10 +150,23 @@ function chooseAction(state, seat) {
     }
   }
 
-  const gained = Math.max(0, Math.min(other.time + 1, 53) - me.time);
+  // 与服务端同一条规则：前面最近那位玩家的前 1 格；前面没人就别空跑
+  let frontier = null;
+  state.players.forEach((p) => {
+    if (p.index === seat || p.time < me.time) return;
+    if (frontier === null || p.time < frontier) frontier = p.time;
+  });
+  if (frontier === null) return best ? best.msg : { type: 'advance' };
+  const gained = Math.max(0, Math.min(frontier + 1, 53) - me.time);
   const advValue = gained * 1.1 + (me.buttons < 3 ? 2 : 0);
   if (!best || advValue > best.v) return { type: 'advance' };
   return best.msg;
+}
+
+/** 取某客户端收到的最后一份状态 */
+function lastState(client) {
+  const list = client.messages.filter((m) => m.type === 'state');
+  return list[list.length - 1];
 }
 
 /** 皮革补丁：填进邻边最多的空格，尽量补洞 */
@@ -183,7 +195,7 @@ function chooseLeatherSpot(board) {
   console.log('[1] 建房与加入');
   const c1 = await wsClient('甲');
   const c2 = await wsClient('乙');
-  c1.send({ type: 'create', name: '甲' });
+  c1.send({ type: 'create', name: '甲', mode: 'online', capacity: 2 });
   const joined1 = await c1.wait((m) => m.type === 'joined');
   check('创建返回房间码', /^[A-Z0-9]{4}$/.test(joined1.room), joined1.room);
   check('创建者座位为 0', joined1.seat === 0);
@@ -250,7 +262,7 @@ function chooseLeatherSpot(board) {
   check('没有遗留未放置的皮革补丁', state.pendingLeather.length === 0);
 
   const leatherGot = LEATHER_SPACES.filter((s) => state.leatherClaimed[s]).length;
-  check('皮革格被先到者领走', leatherGot >= 5, '领走 ' + leatherGot + '/7');
+  check('皮革格被先到者领走', leatherGot >= 5, '领走 ' + leatherGot + '/5');
 
   const boardOk = state.players.every((p) => {
     const filled = p.board.reduce((n, row) => n + row.filter(Boolean).length, 0);
@@ -275,7 +287,155 @@ function chooseLeatherSpot(board) {
   const err3 = await c3.wait((m) => m.type === 'error');
   check('加入不存在的房间被拒绝', /不存在/.test(err3.message), err3.message);
 
+  console.log('\n[6] 再来一局');
+  check('终局后状态为 over', state.phase === 'over', state.phase);
+  c1.send({ type: 'rematch' });
+  await sleep(260);
+  let rs = lastState(c1);
+  check('只有一方投票时不开新局',
+    rs.phase === 'over' && rs.rematchVotes === 1, 'phase=' + rs.phase + ' votes=' + rs.rematchVotes);
+  c2.send({ type: 'rematch' });
+  await sleep(420);
+  rs = lastState(c1);
+  check('双方都投票后开出新的一局', rs.phase === 'playing', 'phase=' + rs.phase);
+  check('新局双方回到起点 0', rs.players.every((p) => p.time === 0),
+    JSON.stringify(rs.players.map((p) => p.time)));
+  check('新局拼布板全部清空', rs.players.every((p) => p.empty === 81));
+  check('新局补丁环恢复满额', rs.circle.length === ALL_PATCHES.length, String(rs.circle.length));
+  check('新局重新开始于同一房间', rs.room === joined1.room);
+
+  console.log('\n[7] 单机：人机对战');
+  const s1 = await wsClient('单人');
+  s1.send({ type: 'create', name: '我', mode: 'solo' });
+  const j1 = await s1.wait((m) => m.type === 'joined');
+  check('人机模式标记正确', j1.mode === 'solo' && j1.local === false, j1.mode);
+  const soloStart = await s1.wait((m) => m.type === 'state' && m.started);
+  check('人机对战建房即开局，不用等人', soloStart.started === true);
+  check('第二位玩家是电脑', soloStart.players[1].bot === true && /电脑/.test(soloStart.players[1].name),
+    soloStart.players[1].name);
+  check('只有 2 位玩家', soloStart.players.length === 2);
+
+  // 让人类只做最省事的动作，看电脑会不会自己接上
+  let solo = soloStart;
+  for (let i = 0; i < 26 && solo.phase !== 'over'; i += 1) {
+    if (solo.active === 0 && !solo.players[0].finished) {
+      const me = solo.players[0];
+      const leather = solo.pendingLeather.some((x) => x.player === 0);
+      if (leather) {
+        const spot = chooseLeatherSpot(me.board);
+        s1.send({ type: 'leather', row: spot.row, col: spot.col });
+      } else {
+        s1.send(chooseAction(solo, 0));
+      }
+    }
+    await sleep(140);
+    solo = lastState(s1);
+  }
+  check('电脑在没有人类干预时也会自己行动', solo.players[1].placed.length + solo.players[1].time > 0,
+    'time=' + solo.players[1].time + ' placed=' + solo.players[1].placed.length);
+  check('对面电脑确实在买补丁', solo.players[1].placed.length >= 1,
+    '放了 ' + solo.players[1].placed.length + ' 块');
+  check('人机局人类回合归人类', solo.active === 0 || solo.phase === 'over' || solo.players[0].finished);
+
+  console.log('\n[8] 多人联机：3 人局');
+  const t1 = await wsClient('一');
+  const t2 = await wsClient('二');
+  const t3 = await wsClient('三');
+  t1.send({ type: 'create', name: '一', mode: 'online', capacity: 3 });
+  const jt = await t1.wait((m) => m.type === 'joined');
+  // joined 与紧跟的 state 是两条独立消息，可能落在不同的 TCP 分段里，
+  // 等一拍再读，否则 lastState 还是 undefined
+  await sleep(200);
+  check('三人房容量为 3', lastState(t1).capacity === 3, String(lastState(t1).capacity));
+  check('三人房一共 3 个座位', lastState(t1).seats.length === 3, String(lastState(t1).seats.length));
+  t2.send({ type: 'join', name: '二', room: jt.room });
+  await t2.wait((m) => m.type === 'joined');
+  await sleep(200);
+  let mid3 = lastState(t1);
+  check('没坐满时不自动开局', mid3.started === false && mid3.phase === 'waiting', mid3.phase);
+  check('房主此时可以开始', mid3.canStart === true);
+  t3.send({ type: 'join', name: '三', room: jt.room });
+  await t3.wait((m) => m.type === 'joined');
+  await sleep(250);
+  let g3 = lastState(t1);
+  check('坐满 3 人自动开局', g3.started === true && g3.players.length === 3, String(g3.players.length));
+  check('三人的名字都对上',
+    g3.players.map((p) => p.name).join(',') === '一,二,三', g3.players.map((p) => p.name).join(','));
+  // 前端拿 players 数组下标当座位号，index 必须与下标一致，否则多人布局会错位
+  check('每位玩家的 index 与数组下标一致',
+    g3.players.every((p, i) => p.index === i),
+    g3.players.map((p) => p.index).join(','));
+
+  const trio = [t1, t2, t3];
+  const actedSeats = new Set();
+  for (let i = 0; i < 30 && g3.phase !== 'over'; i += 1) {
+    const seat = g3.active;
+    if (seat === null || seat === undefined) break;
+    actedSeats.add(seat);
+    const me = g3.players[seat];
+    const cl = trio[seat];
+    if (g3.pendingLeather.some((x) => x.player === seat)) {
+      const spot = chooseLeatherSpot(me.board);
+      cl.send({ type: 'leather', row: spot.row, col: spot.col });
+    } else {
+      cl.send(chooseAction(g3, seat));
+    }
+    await sleep(60);
+    g3 = lastState(t1);
+  }
+  check('三个座位都轮到过', actedSeats.size === 3, [...actedSeats].join(','));
+  check('三人局时间令牌都不越界', g3.players.every((p) => p.time >= 0 && p.time <= 53));
+  check('三人局没有皮革积压', g3.phase === 'over' || g3.pendingLeather.length === 0);
+
+  console.log('\n[9] 多人联机：房主可以提前开局');
+  const u1 = await wsClient('主');
+  const u2 = await wsClient('客');
+  u1.send({ type: 'create', name: '主', mode: 'online', capacity: 4 });
+  const ju = await u1.wait((m) => m.type === 'joined');
+  u2.send({ type: 'join', name: '客', room: ju.room });
+  await u2.wait((m) => m.type === 'joined');
+  await sleep(200);
+  u2.send({ type: 'start' });
+  await sleep(200);
+  check('非房主开局被拒绝', lastState(u1).started === false);
+  u1.send({ type: 'start' });
+  await sleep(300);
+  const started4 = lastState(u1);
+  check('房主可以用 2 人开局（不满 4 人）', started4.started === true, started4.phase);
+  check('开局人数按实际到场人数收窄', started4.players.length === 2, String(started4.players.length));
+
+  console.log('\n[10] 单机：同机双人（热座）');
+  const l1 = await wsClient('本地');
+  l1.send({ type: 'create', name: '小明', name2: '小红', mode: 'local' });
+  const jl = await l1.wait((m) => m.type === 'joined');
+  check('同机模式标记为 local', jl.local === true && jl.mode === 'local');
+  const loc = await l1.wait((m) => m.type === 'state' && m.started);
+  check('同机双人建房即开局', loc.started === true);
+  check('两位玩家名字都对上',
+    loc.players[0].name === '小明' && loc.players[1].name === '小红',
+    loc.players.map((p) => p.name).join(','));
+  const firstSeat = loc.active;
+  l1.send({ type: 'advance' });
+  await sleep(180);
+  let ls = lastState(l1);
+  check('同一台设备可以替当前行动方操作',
+    ls.players[firstSeat].time > 0, 'time=' + ls.players[firstSeat].time);
+  check('行动方自动换人', ls.active !== firstSeat || ls.players[firstSeat].finished);
+  l1.send({ type: 'advance' });
+  await sleep(180);
+  ls = lastState(l1);
+  check('换人之后照样能操作（热座核心）', ls.players.every((p) => p.time > 0),
+    JSON.stringify(ls.players.map((p) => p.time)));
+  check('同机房间不能被别人加入', true); // 见下方单独断言
+
+  const outsider = await wsClient('路人');
+  outsider.send({ type: 'join', name: '路人', room: jl.room });
+  const outsiderErr = await outsider.wait((m) => m.type === 'error');
+  check('单机房间拒绝他人加入', /单机/.test(outsiderErr.message), outsiderErr.message);
+
   c1.close(); c2.close(); c3.close();
+  s1.close(); t1.close(); t2.close(); t3.close();
+  u1.close(); u2.close(); l1.close(); outsider.close();
 
   console.log('\n----------------------------------------');
   console.log('通过 ' + pass + ' 项，失败 ' + fail + ' 项');

@@ -3,34 +3,62 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>拼布 Patchwork · 联机对局</title>
+<title>拼布 Patchwork · 单机与联机</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<!-- ============ 大厅 ============ -->
-<section id="lobby" class="screen active">
-  <div class="lobby-card">
+<!-- ============ 主菜单 ============ -->
+<section id="menu" class="screen active">
+  <div class="menu-card">
     <h1 class="title">拼布</h1>
-    <p class="subtitle">Patchwork · 双人联机</p>
+    <p class="subtitle">Patchwork · 单机与联机</p>
 
     <label class="field">
       <span>你的名字</span>
       <input id="playerName" type="text" maxlength="12" placeholder="随便起个名" autocomplete="off">
     </label>
 
-    <button id="btnCreate" class="btn primary big">创建房间</button>
+    <div class="menu-sec">
+      <div class="sec-title">单机 · 不用等人，点开就玩</div>
+      <button id="btnSolo" class="mode-card">
+        <b>人机对战</b>
+        <small>和电脑下一局</small>
+      </button>
+      <button id="btnLocal" class="mode-card">
+        <b>同机双人</b>
+        <small>一台设备，两人轮流操作</small>
+      </button>
+      <div class="inline-field">
+        <span>电脑难度</span>
+        <select id="botLevel">
+          <option value="normal">普通</option>
+          <option value="easy">轻松</option>
+        </select>
+      </div>
+    </div>
 
-    <div class="divider"><span>或者</span></div>
+    <div class="menu-sec">
+      <div class="sec-title">联机 · 2~6 人</div>
+      <div class="inline-field">
+        <span>人数</span>
+        <select id="playerCount"></select>
+        <button id="btnCreate" class="btn primary">创建房间</button>
+      </div>
+      <div class="inline-field">
+        <span>房间码</span>
+        <input id="roomCode" type="text" maxlength="4" placeholder="4 位" autocomplete="off"
+               style="text-transform:uppercase;letter-spacing:.28em">
+        <button id="btnJoin" class="btn">加入房间</button>
+      </div>
+    </div>
 
-    <label class="field">
-      <span>房间码</span>
-      <input id="roomCode" type="text" maxlength="4" placeholder="4 位字母数字" autocomplete="off" style="text-transform:uppercase;letter-spacing:.35em">
-    </label>
-    <button id="btnJoin" class="btn big">加入房间</button>
+    <p id="menuMsg" class="msg"></p>
 
-    <p id="lobbyMsg" class="msg"></p>
-    <p class="hint">创建后把地址发给朋友，你们连同一个 WiFi 就能同桌对局。</p>
+    <div class="menu-foot">
+      <button id="btnRulesMenu" class="btn tiny">规则与图例</button>
+      <button id="btnChangelog" class="btn tiny">更新日志</button>
+    </div>
   </div>
 </section>
 
@@ -38,37 +66,23 @@
 <section id="game" class="screen">
 
   <header class="topbar">
+    <button id="btnBack" class="btn tiny">← 主菜单</button>
     <div class="room-tag" id="roomTag">房间 ----</div>
-    <div class="turn-tag" id="turnTag">等待对手…</div>
+    <div class="mode-tag" id="modeTag">联机</div>
+    <div class="turn-tag" id="turnTag">等待开局…</div>
     <div class="topbar-actions">
       <button id="btnRules" class="btn tiny">规则</button>
       <button id="btnCopy" class="btn tiny">复制邀请</button>
     </div>
   </header>
 
-  <main class="board-wrap">
+  <main class="board-wrap" id="boardWrap" data-n="2">
 
-    <!-- 左：对手 -->
-    <aside class="side">
-      <div class="player-card" id="cardOpp">
-        <div class="pc-head">
-          <span class="pc-name" id="oppName">对手</span>
-          <div class="pc-stats">
-            <span class="stat btns"><i></i><b id="oppButtons">0</b></span>
-            <span class="stat time"><i></i><b id="oppTime">0</b></span>
-            <span class="stat inc"><i></i><b id="oppIncome">0</b></span>
-          </div>
-        </div>
-        <div class="quilt" id="oppQuilt"></div>
-        <div class="pc-foot">
-          <span id="oppEmpty">空 81 格</span>
-          <span class="bonus" id="oppBonus">7×7 奖励</span>
-        </div>
-      </div>
-    </aside>
+    <!-- 所有玩家的拼布板都挂在这里，数量随人数变 -->
+    <div class="players" id="playersWrap"></div>
 
-    <!-- 中：市场 + 时间板 -->
-    <div class="center">
+    <!-- 市场 + 时间板 + 事件纪要 -->
+    <div class="center" id="centerCol">
       <div class="market" id="market">
         <div class="market-label" id="marketLabel">补丁市场</div>
         <div class="market-row" id="marketRow"></div>
@@ -79,27 +93,11 @@
         <div class="timeboard" id="timeboard"></div>
       </div>
 
-      <div class="log" id="log"></div>
-    </div>
-
-    <!-- 右：自己 -->
-    <aside class="side">
-      <div class="player-card me" id="cardMe">
-        <div class="pc-head">
-          <span class="pc-name" id="meName">我</span>
-          <div class="pc-stats">
-            <span class="stat btns"><i></i><b id="meButtons">0</b></span>
-            <span class="stat time"><i></i><b id="meTime">0</b></span>
-            <span class="stat inc"><i></i><b id="meIncome">0</b></span>
-          </div>
-        </div>
-        <div class="quilt interactive" id="meQuilt"></div>
-        <div class="pc-foot">
-          <span id="meEmpty">空 81 格</span>
-          <span class="bonus" id="meBonus">7×7 奖励</span>
-        </div>
+      <div class="log-wrap">
+        <div class="log" id="log"></div>
+        <button class="log-jump" id="btnLogJump" hidden>有新动态 ↓</button>
       </div>
-    </aside>
+    </div>
 
   </main>
 
@@ -118,11 +116,26 @@
 
 </section>
 
+<!-- ============ 等待开局（联机没坐满时） ============ -->
+<div id="waitModal" class="overlay">
+  <div class="overlay-card">
+    <h2>等待开局</h2>
+    <p class="wait-code" id="waitCode">----</p>
+    <p class="wait-hint">把房间码（或点右上角「复制邀请」）发给朋友，<br>他们在同一个地址输入房间码即可加入。</p>
+    <div class="wait-list" id="waitList"></div>
+    <div class="ov-actions">
+      <button id="btnStart" class="btn primary" disabled>开始对局</button>
+      <button id="btnLeave" class="btn">离开房间</button>
+    </div>
+  </div>
+</div>
+
 <!-- ============ 结算 ============ -->
 <div id="overlay" class="overlay">
   <div class="overlay-card">
     <h2 id="ovTitle">对局结束</h2>
     <div id="ovBody" class="ov-body"></div>
+    <p class="ov-note" id="ovNote"></p>
     <div class="ov-actions">
       <button id="btnRematch" class="btn primary">再来一局</button>
       <button id="btnClose" class="btn">关掉</button>
@@ -130,22 +143,101 @@
   </div>
 </div>
 
-<!-- ============ 规则 ============ -->
+<!-- ============ 规则与图例 ============ -->
 <div id="rulesModal" class="overlay">
   <div class="overlay-card wide">
-    <h2>原版规则速查</h2>
+    <h2>规则与图例</h2>
     <div class="ov-body rules-body">
-      <p><b>目标</b>：让自己的拼布得分最高。分数 = 手里纽扣 + 7×7 奖励（若有） − 每格空格 2 分。</p>
-      <p><b>回合</b>：时间板上<b>落后的一方</b>行动，可能连续行动多次。同格时，后到达（叠在上面）的先动。</p>
-      <p><b>行动 A · 跳过领纽扣</b>：把时间令牌走到对手前方一格，每走一格领 1 个纽扣。</p>
-      <p><b>行动 B · 买补丁</b>：从中立指示物前方 3 块里挑一块 → 中立指示物移到该块位置 → 付纽扣 → 放到拼布板（可旋转/镜像，不可重叠） → 时间令牌按砂漏数前进。</p>
-      <p><b>时间板事件</b>：经过或停在<b>纽扣格</b>，按板上纽扣图标数收钱；经过或停在<b>皮革格</b>，先到者立刻获得 1×1 补丁（自行选择落点）。</p>
-      <p><b>7×7 奖励</b>：先在自己板上拼出完整无洞的 7×7 方块者，得 7 分。</p>
-      <p><b>结束</b>：双方时间令牌都到达第 53 格。若一方先到，需等另一方也到齐才结算。</p>
-      <p><b>平局</b>：先抵达终点者获胜。</p>
+
+      <div class="rules-sec">
+        <h3>目标</h3>
+        <p>把补丁缝到自己的 9×9 拼布板上，尽量填满、尽量多剩纽扣。</p>
+        <p class="formula">最终得分 ＝ 剩余纽扣 ＋ 7×7 奖励 － 空格数 × 2</p>
+        <p>负分是正常的。得分最高者获胜；<b>同分时，先抵达终点的人获胜</b>。</p>
+      </div>
+
+      <div class="rules-sec">
+        <h3>回合顺序（最容易搞错的一点）</h3>
+        <p>不是你来我往轮流走。时间板上<b>最落后的一方</b>行动；只要你还没超过别人，就<b>继续轮到你</b>，所以同一个人可能连走好几步。</p>
+        <p>几个人停在同一格时，<b>后到达</b>的那个先动（时间板上他就是带金边的那一枚）。</p>
+      </div>
+
+      <div class="rules-sec">
+        <h3>每回合二选一</h3>
+        <p><b>行动 A · 跳过领纽扣</b><br>
+          把时间令牌走到<b>你前面最近那位玩家</b>的前方一格，每前进 1 格就从供应堆领 1 个纽扣。
+          两人局时，那位就是你的对手。如果你已经领先全场，这一步不前进也不领纽扣。</p>
+        <p><b>行动 B · 买补丁</b>（固定 5 步）<br>
+          ① 从中立指示物前方 3 块里挑一块 → ② 中立指示物移到该块的位置（只前移不后退）→ ③ 付掉卡片上标的纽扣 → ④ 放到自己板上任意不重叠、不越界的位置（可旋转 / 镜像）→ ⑤ 时间令牌按卡片上的砂漏数前进。</p>
+        <p class="note">补丁一旦放下就不能再移动，也不会被拿回。</p>
+      </div>
+
+      <div class="rules-sec">
+        <h3>时间板上的事件（经过或停在都会触发）</h3>
+        <p><b>纽扣格（全板 9 个）</b>：收入 ＝ 你板上所有补丁印着的纽扣图标总数，<b>不是固定值</b>。所以越早铺上带纽扣的补丁，之后每次经过都收得越多。</p>
+        <p><b>皮革格（全板 5 个）</b>：<b>先到者</b>立刻拿 1 块 1×1 补丁，落点自己挑；后来经过的人拿不到（这块格子会变暗）。</p>
+        <p><b>终点格 53</b>：它本身就是最后一枚纽扣格，抵达时会收最后一次收益。</p>
+      </div>
+
+      <div class="rules-sec">
+        <h3>7×7 奖励与结束</h3>
+        <p>先在自己板上拼出完整无洞的 <b>7×7</b> 方块，得 <b>+7</b> 分。<b>全场只有一块奖励牌</b>，被第一个拼出的人拿走，之后谁再拼出来也没有加分。</p>
+        <p>所有人的令牌都到达第 53 格时对局结束。若某次前进会超出终点，令牌停在 53，只按实际走过的格数领纽扣。</p>
+      </div>
+
+      <div class="rules-sec">
+        <h3>图例 · 时间板</h3>
+        <div class="legend">
+          <div class="lg-row"><span class="lg-swatch tb-normal"></span><span>普通格，无事发生</span></div>
+          <div class="lg-row"><span class="lg-swatch tb-income"></span><span><b>纽扣格</b>：经过时按你板上的纽扣图标总数收钱</span></div>
+          <div class="lg-row"><span class="lg-swatch tb-leather"></span><span><b>皮革格</b>：先到者获得 1×1 补丁</span></div>
+          <div class="lg-row"><span class="lg-swatch tb-claimed"></span><span>皮革格已被领走（变暗，后来者拿不到）</span></div>
+          <div class="lg-row"><span class="lg-swatch tb-end"></span><span><b>终点格 53</b>：同时也是最后一枚纽扣格</span></div>
+          <div class="lg-row"><span class="lg-swatch tok-me"></span><span><b>当前行动方</b>的时间令牌：带金色描边，下一步由他先动</span></div>
+          <div class="lg-row"><span class="lg-swatch tok-opp"></span><span>其他玩家的时间令牌，每人一种颜色（人多时同一格会排成小方阵）</span></div>
+        </div>
+      </div>
+
+      <div class="rules-sec">
+        <h3>图例 · 拼布板与补丁</h3>
+        <div class="legend">
+          <div class="lg-row"><span class="lg-swatch cell-valid"></span><span>落点预览 <b>绿框</b>：这里能放，左键点一下即可固定</span></div>
+          <div class="lg-row"><span class="lg-swatch cell-invalid"></span><span>落点预览 <b>红框</b>：放不下（越界或压到已有补丁）</span></div>
+          <div class="lg-row"><span class="lg-swatch cell-pin"><i></i></span><span>拼布板上的小圆点：这块补丁提供的纽扣收益，几个点就是每次经过纽扣格收几个</span></div>
+        </div>
+        <div class="legend legend-card">
+          <div class="lg-title">补丁卡片上的三个数字</div>
+          <div class="lg-row"><span class="lg-num cost">3 纽扣</span><span>买下它要付的纽扣</span></div>
+          <div class="lg-row"><span class="lg-num t">4 时间</span><span>买下后时间令牌前进几格</span></div>
+          <div class="lg-row"><span class="lg-num inc">+2</span><span>它带来的纽扣收益图标数</span></div>
+        </div>
+      </div>
+
+      <div class="rules-sec">
+        <h3>三种玩法</h3>
+        <p><b>人机对战</b>：你和电脑单挑，建房即开局。<b>同机双人</b>：一台设备上两人轮流操作，轮到谁就替谁落子（不必藏着看，本作没有隐藏信息）。<b>联机对战</b>：2~6 人，房主可以提前开始，也可以等人坐满自动开始。</p>
+      </div>
+
+      <div class="rules-sec">
+        <h3>怎么操作</h3>
+        <p>点市场卡片选补丁 → 鼠标在<b>自己（或当前行动方）的拼布板</b>上移动，落点实时预览（绿＝可放，红＝不可），<b>补丁会盖住鼠标停的那一格</b> → <b>左键点一下</b>固定位置（固定后预览不再跟手，可以放心去点按钮）→ 点右下角<b>确认放置</b>。</p>
+        <p class="note">右键或 <kbd>Esc</kbd>：解除固定 ／ <kbd>R</kbd> 旋转 ／ <kbd>F</kbd> 镜像 ／ <kbd>空格</kbd> 跳过领纽扣 ／ <kbd>Enter</kbd> 确认放置</p>
+      </div>
+
     </div>
     <div class="ov-actions">
       <button id="btnRulesClose" class="btn primary">知道了</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 更新日志 ============ -->
+<div id="changelogModal" class="overlay">
+  <div class="overlay-card wide">
+    <h2>更新日志</h2>
+    <div class="ov-body log-body" id="changelogBody"></div>
+    <div class="ov-actions">
+      <button id="btnChangelogClose" class="btn primary">知道了</button>
     </div>
   </div>
 </div>

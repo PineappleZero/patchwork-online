@@ -2,6 +2,7 @@
 chcp 65001 >nul
 title Patchwork Online
 cd /d "%~dp0"
+set "PATCHWORK_OPEN=1"
 
 set "NODEEXE="
 for /f "delims=" %%i in ('where node 2^>nul') do if not defined NODEEXE set "NODEEXE=%%i"

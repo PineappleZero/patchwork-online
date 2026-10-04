@@ -30,8 +30,18 @@ console.log('\n[1] 组件与数据');
 eq('补丁总数 33', PATCHES.length, 33);
 eq('补丁 id 唯一', new Set(PATCHES.map((p) => p.id)).size, 33);
 eq('时间板总格 54（0..53）', TIME_BOARD.length, 54);
-eq('皮革格 7 个', LEATHER_SPACES.length, 7);
-eq('纽扣格 6 个', INCOME_SPACES.length, 6);
+eq('皮革格 5 个', LEATHER_SPACES.length, 5);
+eq('纽扣格 9 个', INCOME_SPACES.length, 9);
+// 位置也要逐一对上，光看数量容易被"数量对但位置错"骗过去
+eq('皮革格位置', LEATHER_SPACES.join(','), '20,26,32,44,50');
+eq('纽扣格位置', INCOME_SPACES.join(','), '5,11,17,23,29,35,41,47,53');
+// 终点格本身就是最后一枚纽扣格，所以抵达中央时会收最后一次收益
+eq('终点格同时是纽扣格', INCOME_SPACES.includes(LAST_SPACE), true);
+// 皮革格永远夹在相邻两枚纽扣格正中间
+check('皮革格都落在两枚纽扣格中间', LEATHER_SPACES.every(
+  (s) => INCOME_SPACES.includes(s - 3) && INCOME_SPACES.includes(s + 3)
+));
+check('皮革格与纽扣格不重叠', LEATHER_SPACES.every((s) => !INCOME_SPACES.includes(s)));
 
 const sizes = PATCHES.map((p) => p.size);
 check('补丁覆盖格数在 2~8', Math.min(...sizes) >= 2 && Math.max(...sizes) <= 8,
@@ -79,7 +89,7 @@ g1.players[0].time = 9;
 eq('时间落后的换成玩家 1', engine.activePlayerIndex(g1), 1);
 g1.players[0].time = 9;
 g1.players[1].time = 9;
-g1.topPlayer = 1;
+g1.arrival[1] = 99; // 玩家1 后到，叠在上面
 eq('同格时叠在上方的玩家先动', engine.activePlayerIndex(g1), 1);
 
 console.log('\n[5] 行动 A：前进到对手前方并领纽扣');
@@ -107,7 +117,7 @@ p3.time = 5;
 p3.buttons = 0;
 g3b.players[1].time = 12;
 engine.advance(g3b, 0);
-// 对手在 12，落点为 13：位移 8 格（+8），经过收益格 6（+4）
+// 对手在 12，落点为 13：位移 8 格（+8），途中经过纽扣格 11（+4）
 eq('落点为对手前方一格', p3.time, 13);
 eq('经过收益格按图标数收钱', p3.buttons, 8 + 4);
 
@@ -118,17 +128,17 @@ p3c.time = 5;
 p3c.buttons = 0;
 g3c.players[1].time = 17;
 engine.advance(g3c, 0);
-// 对手在 17，落点为 18：位移 13 格（+13），经过收益格 6 与 17（+3 ×2）
+// 对手在 17，落点为 18：位移 13 格（+13），途中经过纽扣格 11 与 17（+3 ×2）
 eq('同一回合经过两个收益格则收两次', p3c.buttons, 13 + 6);
 
 console.log('\n[7] 时间板事件：1x1 皮革补丁只归先到者');
 const g4 = engine.createGame(['甲', '乙']);
 const pa = g4.players[0];
 pa.time = 0;
-g4.players[1].time = 9;
-engine.advance(g4, 0); // 走到 9，经过 4（皮革）、6（收益）
+g4.players[1].time = 19;
+engine.advance(g4, 0); // 走到 20：途中经过纽扣格 5/11/17，并踩到全板第一块皮革格 20
 eq('待放置皮革补丁数为 1', g4.pendingLeather.length, 1);
-eq('皮革格被标记已拿', g4.leatherClaimed[4], true);
+eq('皮革格被标记已拿', g4.leatherClaimed[20], true);
 const leatherActions = engine.legalActions(g4);
 check('有皮革待放置时，合法动作只剩选落点', leatherActions.every((a) => a.type === 'leather'));
 engine.placeLeather(g4, 0, 0, 0);
@@ -141,30 +151,30 @@ const pb5 = g5b.players[1]; // 玩家 1 落后，由他行动
 pb5.time = 0;
 pb5.incomeIcons = 0;
 const other5 = g5b.players[0];
-other5.time = 10;
-// 玩家 1 从 0 出发，会被推到对手前方一格（11），途中经过 4、6、11
-g5b.topPlayer = 1;
+other5.time = 29;
+// 玩家 1 从 0 出发，会被推到对手前方一格（30），途中踩到 20 与 26 两块皮革
+
 engine.advance(g5b, 1);
-eq('到达对手前 1 格', pb5.time, 11);
-eq('皮革格 4 与 11 被标记已拿', g5b.leatherClaimed[4] === true && g5b.leatherClaimed[11] === true, true);
-eq('途中经过 4 与 11 两块皮革', g5b.pendingLeather.length, 2);
+eq('到达对手前 1 格', pb5.time, 30);
+eq('皮革格 20 与 26 被标记已拿', g5b.leatherClaimed[20] === true && g5b.leatherClaimed[26] === true, true);
+eq('途中经过 20 与 26 两块皮革', g5b.pendingLeather.length, 2);
 
 console.log('\n[7b] 对手经过同一皮革格不再获得');
 const g5c = engine.createGame(['甲', '乙']);
 const c0 = g5c.players[0];
 const c1 = g5c.players[1];
 c0.time = 0;
-c1.time = 10;
+c1.time = 29;
 c0.incomeIcons = 0;
-g5c.topPlayer = 0;
-engine.advance(g5c, 0); // 玩家0 被推到 11，拿走皮革 4 与 11
+
+engine.advance(g5c, 0); // 玩家0 被推到 30，一路拿走皮革 20 与 26
 const gotByFirst = g5c.pendingLeather.length;
 eq('先到者拿到 2 块皮革', gotByFirst, 2);
 g5c.pendingLeather = [];
-// 现在让玩家 1 也经过 4 和 11 这两格（构造：玩家1 回到 3 再被推到 12）
-c1.time = 3;
-c0.time = 11;
-g5c.topPlayer = 1;
+// 现在让玩家 1 也经过 20 和 26 这两格（构造：玩家1 退到 19，再被推到 31）
+c1.time = 19;
+c0.time = 30;
+
 engine.advance(g5c, 1);
 eq('后到者经过已领走的皮革格不会再获得', g5c.pendingLeather.length, 0);
 
@@ -281,6 +291,132 @@ if (target) {
 } else {
   check('可见补丁中无可测试的时间≥2 的块（跳过）', true);
 }
+
+console.log('\n[16] 多人局：回合顺序');
+const m1 = engine.createGame(['甲', '乙', '丙']);
+eq('三人局人数正确', m1.players.length, 3);
+eq('每人起始 5 纽扣', m1.players.every((p) => p.buttons === START_BUTTONS), true);
+m1.players[0].time = 10; m1.players[1].time = 20; m1.players[2].time = 30;
+eq('时间最靠后的先动', engine.activePlayerIndex(m1), 0);
+m1.players[0].time = 30; m1.players[1].time = 30; m1.players[2].time = 30;
+m1.arrival[0] = 1; m1.arrival[1] = 7; m1.arrival[2] = 3;
+eq('三人同格时，最后到达的先动', engine.activePlayerIndex(m1), 1);
+m1.players[2].time = 29;
+eq('有人落后时，落后的那位先动', engine.activePlayerIndex(m1), 2);
+
+console.log('\n[17] 多人局：行动 A 的推广');
+const m2 = engine.createGame(['甲', '乙', '丙']);
+m2.players[0].time = 10; m2.players[1].time = 20; m2.players[2].time = 30;
+const m2before = m2.players[0].buttons;
+engine.advance(m2, 0);
+eq('只前进到前面最近那位玩家的前 1 格', m2.players[0].time, 21);
+eq('领到与路程等量的纽扣', m2.players[0].buttons - m2before, 11);
+// 把甲变成全场领先，再让他跳过
+m2.players[1].time = 15; m2.players[2].time = 15;
+const leadTime = m2.players[0].time;
+const leadButtons = m2.players[0].buttons;
+const passRes = engine.advance(m2, 0);
+eq('已领先全场时不会倒着走', m2.players[0].time, leadTime);
+eq('领先时空跑不领纽扣', m2.players[0].buttons, leadButtons);
+eq('空跑记成 pass 事件', passRes.events[0].type, 'pass');
+
+console.log('\n[18] 7x7 奖励全场只有一块');
+function prepSeven(player, patchId, oriIndex) {
+  for (let r = 0; r < 7; r += 1) {
+    for (let c = 0; c < 7; c += 1) player.board[r][c] = { id: 'I', oriIndex: 0 };
+  }
+  engine.PATCH_BY_ID.get(patchId).orientations[oriIndex].cells
+    .forEach(([r, c]) => { player.board[r][c] = null; });
+}
+const m3 = engine.createGame(['甲', '乙', '丙']);
+m3.players.forEach((p) => { p.buttons = 99; });
+prepSeven(m3.players[0], 'A', 0);
+engine.buyPatch(m3, 0, 'A', 0, 0, 0);
+eq('先拼出 7x7 的甲拿到奖励', m3.bonusTileOwner, 0);
+eq('甲的 hasBonusTile 为真', m3.players[0].hasBonusTile, true);
+// 把 A 放回环上并让乙也拼出 7x7
+m3.circle = ['A'].concat(m3.circle);
+m3.neutral = m3.circle.length - 1;
+prepSeven(m3.players[1], 'A', 0);
+engine.buyPatch(m3, 1, 'A', 0, 0, 0);
+eq('奖励已被拿走，乙不再获得', m3.players[1].hasBonusTile, false);
+eq('归属者不会被覆盖', m3.bonusTileOwner, 0);
+eq('乙的分数里没有 +7', engine.score(m3, 1).bonus, 0);
+
+console.log('\n[19] 多人局结算与排名');
+const m4 = engine.createGame(['甲', '乙', '丙']);
+m4.players.forEach((p) => {
+  for (let r = 0; r < 9; r += 1) for (let c = 0; c < 9; c += 1) p.board[r][c] = { id: 'I', oriIndex: 0 };
+});
+m4.players[0].buttons = 10; m4.players[1].buttons = 30; m4.players[2].buttons = 20;
+const r4 = engine.finalResult(m4);
+eq('排名按总分降序', r4.ranking.join(','), '1,2,0');
+eq('最高分者获胜', r4.winner, 1);
+eq('三人的分数都在结果里', r4.scores.length, 3);
+// 全员同分且到达顺序一致 → 真并列
+const m5 = engine.createGame(['甲', '乙', '丙']);
+m5.players.forEach((p) => {
+  for (let r = 0; r < 9; r += 1) for (let c = 0; c < 9; c += 1) p.board[r][c] = { id: 'I', oriIndex: 0 };
+  p.buttons = 10;
+});
+// 同分时用「谁先抵达终点」破平（原版规则），所以实战中不会出现并列
+m5.finishOrder = [2, 0, 1];
+eq('三人同分时先到终点者胜', engine.finalResult(m5).winner, 2);
+m5.finishOrder = [];
+eq('连到达顺序都没有时才判并列', engine.finalResult(m5).winner, null);
+
+console.log('\n[20] 多人局的皮革补丁队列');
+const m6 = engine.createGame(['甲', '乙', '丙']);
+m6.players[0].time = 0; m6.players[0].incomeIcons = 0;
+m6.players[1].time = 29; m6.players[2].time = 29;
+engine.advance(m6, 0);
+eq('先到者一次拿到两块皮革', m6.pendingLeather.length, 2);
+eq('两块都记在玩家 0 名下', m6.pendingLeather.every((x) => x.player === 0), true);
+eq('有待放置皮革时仍由该玩家操作', engine.currentPlayerIndex(m6), 0);
+engine.placeLeather(m6, 0, 0, 0);
+engine.placeLeather(m6, 0, 0, 1);
+eq('逐一放下后队列清空', m6.pendingLeather.length, 0);
+check('皮革补丁都记到了板上',
+  m6.players[0].board[0][0] !== null && m6.players[0].board[0][1] !== null);
+
+console.log('\n[21] 电脑对手能自己打完一局');
+const ai = require('./ai');
+function playAiGame(n, level) {
+  const state = engine.createGame(Array.from({ length: n }, (_, i) => ({ name: 'AI' + i, bot: true })));
+  let moves = 0;
+  while (!engine.isGameOver(state) && moves < 2000) {
+    moves += 1;
+    const seat = engine.currentPlayerIndex(state);
+    if (state.pendingLeather.length) {
+      const cell = ai.chooseLeatherCell(state, seat);
+      engine.placeLeather(state, seat, cell.row, cell.col);
+    } else {
+      const a = ai.chooseAction(state, seat, level);
+      if (!a) break;
+      if (a.type === 'advance') engine.advance(state, seat);
+      else engine.buyPatch(state, seat, a.patchId, a.oriIndex, a.row, a.col);
+    }
+  }
+  const res = engine.finalResult(state);
+  return {
+    over: engine.isGameOver(state),
+    moves,
+    placedTotal: state.players.reduce((s, p) => s + p.placed.length, 0),
+    maxEmpty: Math.max(...state.players.map((p) => engine.emptySpaces(p.board))),
+    scores: res.scores.map((x) => x.total),
+    winner: res.winner,
+  };
+}
+[2, 3].forEach((n) => {
+  for (let run = 0; run < 2; run += 1) {
+    const r = playAiGame(n, 'normal');
+    check(`${n} 人局电脑能自己打完（${r.moves} 手）`, r.over && r.moves < 1500);
+    check(`${n} 人局电脑确实在买补丁（共 ${r.placedTotal} 块）`, r.placedTotal > n * 3);
+    check(`${n} 人局电脑把板子拼得不算烂（最多空 ${r.maxEmpty} 格）`, r.maxEmpty < 60);
+  }
+});
+const easy = playAiGame(2, 'easy');
+check('轻松难度也能正常打完', easy.over && easy.moves < 1500);
 
 console.log('\n----------------------------------------');
 console.log('通过 ' + pass + ' 项，失败 ' + fail + ' 项');

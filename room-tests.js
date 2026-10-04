@@ -73,13 +73,26 @@ function wsClient() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** 问一下服务端当前有几个房间（用来验证房间回收） */
+function roomCount() {
+  return new Promise((resolve) => {
+    http.get({ port: PORT, host: '127.0.0.1', path: '/api/info' }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(body).rooms); } catch (e) { resolve(-1); }
+      });
+    }).on('error', () => resolve(-1));
+  });
+}
+
 (async () => {
   console.log('\n=== 房间生命周期测试 ===\n');
 
   console.log('[1] 建房、加入与自动开局');
   const host = await wsClient();
   await sleep(200);
-  host.send({ type: 'create', name: '房主' });
+  host.send({ type: 'create', name: '房主', mode: 'online', capacity: 2 });
   await sleep(350);
   const room = host.latest('joined').room;
 
@@ -139,7 +152,87 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const err2 = stray.latest('error');
   check('不存在的房间被拒绝', !!err2 && /不存在/.test(err2.message), err2 ? err2.message : '(无报错)');
 
+  console.log('\n[7] 多人房里有人掉线，其他人继续，掉线者能凭 token 回来');
+  const m1 = await wsClient();
+  const m2 = await wsClient();
+  const m3 = await wsClient();
+  await sleep(200);
+  m1.send({ type: 'create', name: '甲', mode: 'online', capacity: 3 });
+  await sleep(300);
+  const room3 = m1.latest('joined').room;
+  m2.send({ type: 'join', name: '乙', room: room3 });
+  await sleep(200);
+  m3.send({ type: 'join', name: '丙', room: room3 });
+  await sleep(400);
+  const token3 = m3.latest('joined').token;
+  check('三人局已开局', m1.latest('state').started === true);
+  check('三人房座位数为 3', (m1.latest('state').seats || []).length === 3);
+
+  m3.close();
+  await sleep(1400);
+  const st3 = m1.latest('state');
+  check('掉线的第三位被标记离线', st3.seats[2] && st3.seats[2].connected === false);
+  check('另外两人不受影响', st3.players.length === 3 && st3.phase === 'playing');
+
+  const back3 = await wsClient();
+  await sleep(150);
+  back3.send({ type: 'join', name: '丙', room: room3, token: token3 });
+  await sleep(500);
+  const bj = back3.latest('joined');
+  check('掉线者凭 token 回到原座位', !!bj && bj.seat === 2, bj ? 'seat=' + bj.seat : 'no joined');
+  check('回来后座位恢复在线', m1.latest('state').seats[2].connected === true);
+  check('对局没有被重置', m1.latest('state').players.length === 3 &&
+    m1.latest('state').phase === 'playing');
+
+  console.log('\n[8] 单机房间不会被别人抢走，没人了就回收');
+  const solo = await wsClient();
+  await sleep(150);
+  solo.send({ type: 'create', name: '独狼', mode: 'solo' });
+  await sleep(400);
+  check('单机房不需要等待对手，直接开局', solo.latest('state').started === true);
+  check('单机房只有一个连接座位', (solo.latest('state').seats || []).length === 1);
+  const soloRoom = solo.latest('joined').room;
+  const soloToken = solo.latest('joined').token;
+
+  const grabber = await wsClient();
+  await sleep(150);
+  grabber.send({ type: 'join', name: '想蹭的', room: soloRoom });
+  await sleep(400);
+  check('没有 token 的人加不进单机房', /单机/.test((grabber.latest('error') || {}).message || ''),
+    JSON.stringify(grabber.latest('error')));
+
+  // 刷新页面 = 带 token 重连，必须放行，否则单机局一刷新就没了
+  solo.close();
+  await sleep(900);
+  const backSolo = await wsClient();
+  await sleep(150);
+  backSolo.send({ type: 'join', name: '独狼', room: soloRoom, token: soloToken });
+  await sleep(500);
+  check('单机局刷新后能接着打（凭 token 回到座位）',
+    !!backSolo.latest('joined'), JSON.stringify(backSolo.latest('error')));
+  check('回来之后还是那局，进度没丢',
+    backSolo.latest('state').started === true && backSolo.latest('state').players.length === 2);
+
+  backSolo.close();
+  grabber.close();
+  await sleep(2200);
+  const roomsFinal = await roomCount();
+  check('房间总数没有失控', roomsFinal >= 0 && roomsFinal < 40, String(roomsFinal));
+
   host.close(); rejoin.close(); intruder.close(); stray.close();
+  m1.close(); m2.close(); back3.close();
+
+  console.log('\n[9] 没人进过的空房间会被回收（防内存泄漏）');
+  const ghost = await wsClient();
+  await sleep(150);
+  ghost.send({ type: 'create', name: '幽灵', mode: 'online', capacity: 4 });
+  await sleep(450);
+  const peak = await roomCount();
+  check('创建的房间确实登记在册', peak > 0, String(peak));
+  ghost.close();
+  await sleep(3000);
+  const after = await roomCount();
+  check('断开后空房间被回收', after < peak, peak + ' -> ' + after);
 
   console.log('\n----------------------------------------');
   console.log('通过 ' + pass + ' 项，失败 ' + fail + ' 项');

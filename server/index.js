@@ -16,6 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const engine = require('./engine');
+const ai = require('./ai');
 const { PATCHES, LEATHER, TIME_BOARD, LEATHER_SPACES, INCOME_SPACES, BOARD_SIZE, LAST_SPACE } = require('./data');
 
 const PORT = Number(process.env.PORT || 3178);
@@ -146,6 +147,26 @@ function serveStatic(req, res) {
 
 const rooms = new Map();
 
+/*
+ * 三种模式：
+ *   solo   人机对战   —— 1 个连接槽，对局 2 人（第 2 位是电脑）
+ *   local  同机双人   —— 1 个连接槽，对局 2 人（热座，同一台设备轮流操作）
+ *   online 联机对战   —— N 个连接槽，对局 N 人（2~6 人），坐满自动开局，房主也能提前开
+ *
+ * slots    = 连接槽数量（能连几台设备）
+ * capacity = 对局里有多少位玩家
+ * 这两个在联机模式下相等，在单机模式下 slots=1 / capacity=2。
+ */
+const MODES = {
+  solo: { slots: 1, capacity: 2, local: false, botSeats: [1], label: '人机对战' },
+  local: { slots: 1, capacity: 2, local: true, botSeats: [], label: '同机双人' },
+  online: { slots: null, capacity: null, local: false, botSeats: [], label: '联机对战' },
+};
+const MIN_ONLINE = 2;
+const MAX_ONLINE = 6;
+/** 电脑思考多久再落子，太快要看不清它在干什么 */
+const BOT_DELAY_MS = Number(process.env.PATCHWORK_BOT_DELAY || 750);
+
 function makeRoomCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   for (;;) {
@@ -159,17 +180,36 @@ function makeToken() {
   return crypto.randomBytes(12).toString('hex');
 }
 
-function createRoom() {
-  const code = makeRoomCode();
+function cleanName(v, fallback) {
+  const s = String(v == null ? '' : v).trim().slice(0, 12);
+  return s || fallback;
+}
+
+function createRoom(opts) {
+  const mode = MODES[opts.mode] ? opts.mode : 'online';
+  const def = MODES[mode];
+  const capacity = mode === 'online'
+    ? Math.max(MIN_ONLINE, Math.min(MAX_ONLINE, Number(opts.capacity) || MIN_ONLINE))
+    : def.capacity;
   const room = {
-    code,
+    code: makeRoomCode(),
+    mode,
+    capacity,
+    local: def.local,
+    slots: mode === 'online' ? capacity : def.slots,
     state: null,
-    seats: [null, null], // { name, token, socket, connected }
+    seats: [],
+    playerNames: [],
+    localNames: [],
+    botSeats: new Set(def.botSeats),
+    botLevel: opts.level === 'easy' ? 'easy' : 'normal',
+    botTimer: null,
     rematchVotes: new Set(),
     history: [], // 对局事件流水，供中途加入的人回看
     createdAt: Date.now(),
   };
-  rooms.set(code, room);
+  room.seats = new Array(room.slots).fill(null);
+  rooms.set(room.code, room);
   return room;
 }
 
@@ -177,26 +217,70 @@ function seatOfToken(room, token) {
   return room.seats.findIndex((s) => s && s.token === token);
 }
 
+function joinedCount(room) {
+  return room.seats.filter(Boolean).length;
+}
+
+/** 按下单机/联机规则凑出对局里的玩家名单，然后开局 */
+function startGame(room) {
+  room.seats = room.seats.filter(Boolean);
+  const list = [];
+  for (let i = 0; i < room.capacity; i += 1) {
+    if (room.botSeats.has(i)) {
+      list.push({ name: room.botLevel === 'easy' ? '电脑·轻松' : '电脑', bot: true });
+    } else if (room.local) {
+      list.push({ name: cleanName(i === 0 ? room.localNames[0] : room.localNames[i], `玩家${i + 1}`) });
+    } else {
+      list.push({ name: (room.seats[i] && room.seats[i].name) || `玩家${i + 1}` });
+    }
+  }
+  room.playerNames = list.map((x) => x.name);
+  room.state = engine.createGame(list);
+  room.history = [];
+  room.rematchVotes.clear();
+  room.botTimer = null;
+}
+
+/** 终局后重开一局：人数、名字、电脑座位都保持不变 */
+function newRound(room) {
+  const wasBot = new Set(room.botSeats);
+  room.botSeats = wasBot;
+  room.state = engine.createGame(room.playerNames.map((n, i) => ({ name: n, bot: wasBot.has(i) })));
+  room.history = [];
+  room.rematchVotes.clear();
+}
+
 /** 对外广播的视图：隐藏对手的私有信息（本作无隐藏信息，全部可见） */
 function serialize(room) {
   const st = room.state;
+  const over = st ? engine.isGameOver(st) : false;
   return {
     type: 'state',
     room: room.code,
-    seats: room.seats.map((s) => (s ? { name: s.name, connected: s.connected } : null)),
+    mode: room.mode,
+    local: room.local,
+    capacity: room.capacity,
+    slots: room.slots,
     started: !!st,
-    phase: st ? (engine.isGameOver(st) ? 'over' : 'playing') : 'waiting',
+    phase: st ? (over ? 'over' : 'playing') : 'waiting',
+    full: joinedCount(room) >= room.slots,
+    canStart: room.mode === 'online' && !st && joinedCount(room) >= MIN_ONLINE,
+    seats: room.seats.map((s, i) => (s
+      ? { name: s.name, connected: s.connected, host: i === 0, bot: room.botSeats.has(i) }
+      : null)),
+    playerNames: room.playerNames,
+    botLevel: room.botLevel,
     neutral: st ? st.neutral : 0,
     circle: st ? st.circle : [],
     visible: st ? engine.visiblePatchIds(st) : [],
-    active: st && !engine.isGameOver(st)
-      ? (st.pendingLeather.length ? st.pendingLeather[0].player : engine.activePlayerIndex(st))
-      : null,
+    active: st && !over ? engine.currentPlayerIndex(st) : null,
     pendingLeather: st ? st.pendingLeather.map((x) => ({ player: x.player })) : [],
     leatherClaimed: st ? st.leatherClaimed : [],
-    topPlayer: st ? st.topPlayer : 0,
+    rematchVotes: room.rematchVotes.size,
     players: st ? st.players.map((p) => ({
+      index: p.index,
       name: p.name,
+      bot: p.bot,
       buttons: p.buttons,
       time: p.time,
       board: p.board,
@@ -206,7 +290,8 @@ function serialize(room) {
       finished: p.finished,
       empty: engine.emptySpaces(p.board),
     })) : [],
-    result: st && engine.isGameOver(st) ? engine.finalResult(st) : null,
+    bonusTileOwner: st ? st.bonusTileOwner : null,
+    result: st && over ? engine.finalResult(st) : null,
     lastEvents: st ? st.lastEvents || [] : [],
     /** 对局事件流水（中途加入的人用它补齐日志） */
     history: room.history || [],
@@ -224,11 +309,17 @@ function broadcast(room) {
 }
 
 /**
- * 定期清扫：把「标记为未连接」的座位真正释放掉，
- * 避免客户端异常掉线时座位被永久占住。
- * 尚未开局 → 立即释放；对局中 → 给 5 分钟重连窗口。
+ * 定期清扫：
+ * 1) 把「标记为未连接」的座位处理掉 —— 还没开局就直接释放，开局中给 5 分钟重连窗口。
+ * 2) 整个房间一个人都不剩时按 TTL 回收。
+ *    这一步是必须的：开局后的座位永远不会变成 null，
+ *    只看「座位是否全空」的话死房间会一直堆在内存里。
  */
 const RELEASE_GRACE_MS = 5 * 60 * 1000;
+const ROOM_TTL_ONLINE_MS = 20 * 60 * 1000; // 联机局全离线后还留 20 分钟等重连
+const ROOM_TTL_SOLO_MS = 90 * 1000;        // 单机房没人了就尽快回收（本来就没人能加进来）
+const ROOM_TTL_IDLE_MS = 1500;             // 压根没开局的空房
+
 setInterval(() => {
   const now = Date.now();
   rooms.forEach((room, code) => {
@@ -243,19 +334,101 @@ setInterval(() => {
       } else if (since > RELEASE_GRACE_MS) {
         s.released = true; // 开局后超时未回，允许他人接管座位
         changed = true;
-      } else {
-        changed = true;
       }
     });
+
+    const alive = room.seats.some((s) => s && (s.connected || s.socket));
+    if (!alive) {
+      if (!room.emptySince) { room.emptySince = now; changed = true; }
+      const ttl = room.state
+        ? (room.mode === 'online' ? ROOM_TTL_ONLINE_MS : ROOM_TTL_SOLO_MS)
+        : ROOM_TTL_IDLE_MS;
+      if (now - room.emptySince > ttl) {
+        if (room.botTimer) clearTimeout(room.botTimer);
+        rooms.delete(code);
+        return;
+      }
+    } else if (room.emptySince) {
+      room.emptySince = 0;
+    }
+
     if (room.seats.every((s) => s === null)) {
+      if (room.botTimer) clearTimeout(room.botTimer);
       rooms.delete(code);
-      changed = false;
+      return;
     }
     if (changed) broadcast(room);
   });
 }, 600).unref();
 
-function handleMessage(room, seatIndex, msg) {
+/** 记录对局事件流水，供中途加入/刷新的人回看 */
+function remember(room, events, actor) {
+  (events || []).forEach((e) => {
+    const item = Object.assign({}, e);
+    if (item.player === undefined) item.player = actor;
+    room.history.push(item);
+  });
+  if (room.history.length > 300) {
+    room.history.splice(0, room.history.length - 300);
+  }
+}
+
+/** 这个连接现在能替哪些对局座位操作 */
+function controlledSeats(room, connIndex) {
+  // 同机双人：一台设备控制全部座位，轮到谁就替谁操作
+  if (room.local) return room.state.players.map((p) => p.index);
+  return [connIndex];
+}
+
+/* ------------------------- 电脑对手 ------------------------- */
+
+function maybeRunBot(room) {
+  if (!room.botSeats.size) return;
+  const st = room.state;
+  if (!st || engine.isGameOver(st)) return;
+  if (room.botTimer) return;
+  const seat = engine.currentPlayerIndex(st);
+  if (!room.botSeats.has(seat)) return;
+  room.botTimer = setTimeout(() => {
+    room.botTimer = null;
+    runBot(room);
+  }, BOT_DELAY_MS);
+  if (room.botTimer.unref) room.botTimer.unref();
+}
+
+function runBot(room) {
+  const st = room.state;
+  if (!st || engine.isGameOver(st)) return;
+  const seat = engine.currentPlayerIndex(st);
+  if (!room.botSeats.has(seat)) return;
+  try {
+    let events = [];
+    if (st.pendingLeather.length) {
+      const cell = ai.chooseLeatherCell(st, seat);
+      engine.placeLeather(st, seat, cell.row, cell.col);
+      events = [{ type: 'leatherPlaced', row: cell.row, col: cell.col, player: seat }];
+    } else {
+      const action = ai.chooseAction(st, seat, room.botLevel);
+      if (!action) return;
+      events = action.type === 'advance'
+        ? engine.advance(st, seat).events
+        : engine.buyPatch(st, seat, action.patchId, action.oriIndex, action.row, action.col).events;
+    }
+    st.lastEvents = events;
+    remember(room, events, seat);
+  } catch (err) {
+    // 电脑偶尔挑到算不出的局面，直接跳过这一手，别把房间搞崩
+    try {
+      st.lastEvents = engine.advance(st, seat).events;
+    } catch (e) { return; }
+  }
+  broadcast(room);
+  maybeRunBot(room);
+}
+
+/* ------------------------- 消息处理 ------------------------- */
+
+function handleMessage(room, connIndex, msg) {
   const st = room.state;
   if (msg.type === 'chat') {
     room.seats.forEach((s, i) => {
@@ -263,61 +436,83 @@ function handleMessage(room, seatIndex, msg) {
     });
     return;
   }
+
+  // 联机房间：房主提前开局
+  if (msg.type === 'start') {
+    if (room.mode !== 'online') return;
+    if (room.state) return;
+    if (connIndex !== 0) { send(room.seats[connIndex] && room.seats[connIndex].socket, { type: 'error', message: '只有房主能开始' }); return; }
+    if (joinedCount(room) < MIN_ONLINE) { send(room.seats[connIndex].socket, { type: 'error', message: `至少 ${MIN_ONLINE} 人才能开始` }); return; }
+    room.capacity = joinedCount(room);
+    startGame(room);
+    broadcast(room);
+    return;
+  }
+
   if (!st) return;
+
+  // 「再来一局」必须在「已结束」判断**之前**处理 ——
+  // 它本来就是终局后才点的，放在后面等于永远走不到（v1.1 的 bug）。
+  if (msg.type === 'rematch') {
+    startRematch(room, connIndex);
+    return;
+  }
+
   if (engine.isGameOver(st)) return;
 
-  // 记录最近若干条对局事件，供中途加入/刷新的人回看
-  const remember = (events, actor) => {
-    (events || []).forEach((e) => {
-      const item = Object.assign({}, e);
-      if (item.player === undefined) item.player = actor;
-      room.history.push(item);
-    });
-    if (room.history.length > 200) {
-      room.history.splice(0, room.history.length - 200);
-    }
-  };
-
   try {
-    // 有皮革补丁待放置时，只有该补丁的所有者可以操作（且必须操作）
+    // 现在该谁动手：有待放置皮革就是皮革主人，否则是时间最落后的那位
+    const want = engine.currentPlayerIndex(st);
+    if (!controlledSeats(room, connIndex).includes(want)) throw new Error('还没轮到你');
+
     if (st.pendingLeather.length) {
-      const owner = st.pendingLeather[0].player;
       if (msg.type !== 'leather') throw new Error('请先放置 1x1 皮革补丁');
-      if (owner !== seatIndex) throw new Error('还没轮到你');
-      engine.placeLeather(st, seatIndex, msg.row, msg.col);
-      const ev = [{ type: 'leatherPlaced', row: msg.row, col: msg.col, player: seatIndex }];
+      engine.placeLeather(st, want, msg.row, msg.col);
+      const ev = [{ type: 'leatherPlaced', row: msg.row, col: msg.col, player: want }];
       st.lastEvents = ev;
-      remember(ev, seatIndex);
+      remember(room, ev, want);
       broadcast(room);
+      maybeRunBot(room);
       return;
     }
 
     if (msg.type === 'advance') {
-      const pi = engine.activePlayerIndex(st);
-      if (pi !== seatIndex) throw new Error('还没轮到你');
-      const res = engine.advance(st, pi);
+      const res = engine.advance(st, want);
       st.lastEvents = res.events;
-      remember(res.events, pi);
+      remember(room, res.events, want);
     } else if (msg.type === 'patch') {
-      const pi = engine.activePlayerIndex(st);
-      if (pi !== seatIndex) throw new Error('还没轮到你');
-      const res = engine.buyPatch(st, pi, msg.patchId, msg.oriIndex, msg.row, msg.col);
+      const res = engine.buyPatch(st, want, msg.patchId, msg.oriIndex, msg.row, msg.col);
       st.lastEvents = res.events;
-      remember(res.events, pi);
-    } else if (msg.type === 'rematch') {
-      room.rematchVotes.add(seatIndex);
-      if (room.rematchVotes.size >= 2) {
-        room.state = engine.createGame(room.seats.map((s) => (s ? s.name : '玩家')));
-        room.rematchVotes.clear();
-        room.history = [];
-      }
+      remember(room, res.events, want);
     } else {
       throw new Error('未知的操作');
     }
     broadcast(room);
+    maybeRunBot(room);
   } catch (err) {
-    send(room.seats[seatIndex] && room.seats[seatIndex].socket, { type: 'error', message: err.message });
+    send(room.seats[connIndex] && room.seats[connIndex].socket, { type: 'error', message: err.message });
   }
+}
+
+/**
+ * 终局后大家都要投「再来一局」，凑齐才算数。
+ * 票数门槛是「有人的座位数」，不再写死 2。
+ */
+function startRematch(room, connIndex) {
+  if (!room.state || !engine.isGameOver(room.state)) {
+    send(room.seats[connIndex] && room.seats[connIndex].socket, { type: 'error', message: '这局还没结束' });
+    return;
+  }
+  room.rematchVotes.add(connIndex);
+  const needed = joinedCount(room);
+  if (room.rematchVotes.size < needed) {
+    broadcast(room);
+    return;
+  }
+  room.rematchVotes.clear();
+  newRound(room);
+  broadcast(room);
+  maybeRunBot(room);
 }
 
 /* ------------------------------------------------------------------ */
@@ -376,16 +571,24 @@ server.on('upgrade', (req, socket) => {
       try { msg = JSON.parse(text); } catch (e) { return; }
 
       if (msg.type === 'create') {
-        room = createRoom();
+        room = createRoom({ mode: msg.mode, capacity: msg.capacity, level: msg.level });
         seatIndex = 0;
-        room.seats[0] = {
-          name: String(msg.name || '玩家一').slice(0, 12) || '玩家一',
-          token: makeToken(),
-          socket,
-          connected: true,
-        };
-        send(socket, { type: 'joined', room: room.code, seat: 0, token: room.seats[0].token });
+        const name = cleanName(msg.name, '玩家一');
+        room.seats[0] = { name, token: makeToken(), socket, connected: true };
+        send(socket, {
+          type: 'joined', room: room.code, seat: 0,
+          token: room.seats[0].token, mode: room.mode, local: room.local,
+        });
+        if (room.mode !== 'online') {
+          // 单机两种模式：建完房直接开局，不用等人
+          room.localNames = [
+            name,
+            cleanName(msg.name2, room.mode === 'local' ? '玩家二' : '电脑'),
+          ];
+          startGame(room);
+        }
         broadcast(room);
+        maybeRunBot(room);
         return;
       }
 
@@ -399,6 +602,12 @@ server.on('upgrade', (req, socket) => {
         if (msg.token) {
           seat = target.seats.findIndex((s) => s && s.token === msg.token);
         }
+        // 单机房间平时不接受新玩家，但**凭 token 回来接着打**要放行，
+        // 否则刷新一下页面这局就没了。
+        if (target.mode !== 'online' && seat < 0) {
+          send(socket, { type: 'error', message: '这是单机房间，不能加入' });
+          return;
+        }
         // 2) 否则找空座位：真正为 null，或有人断线且座位已被标记释放
         if (seat < 0) {
           seat = target.seats.findIndex((s) => s === null || (s && !s.connected && s.released));
@@ -411,19 +620,24 @@ server.on('upgrade', (req, socket) => {
         room = target;
         seatIndex = seat;
         const prev = room.seats[seat];
+        const fallback = seat === 0 ? '玩家一' : `玩家${seat + 1}`;
         room.seats[seat] = {
-          name: String(msg.name || (prev && prev.name) || (seat === 0 ? '玩家一' : '玩家二')).slice(0, 12),
+          name: cleanName(msg.name, prev ? prev.name : fallback),
           token: prev ? prev.token : makeToken(),
           socket,
           connected: true,
           released: false,
         };
-        // 两人到齐且尚未开局则自动开局
-        if (!room.state && room.seats.every((s) => s)) {
-          room.state = engine.createGame(room.seats.map((s) => s.name));
+        // 坐满了自动开局；没坐满就等房主点「开始」
+        if (!room.state && joinedCount(room) >= room.slots) {
+          startGame(room);
         }
-        send(socket, { type: 'joined', room: room.code, seat, token: room.seats[seat].token });
+        send(socket, {
+          type: 'joined', room: room.code, seat,
+          token: room.seats[seat].token, mode: room.mode, local: room.local,
+        });
         broadcast(room);
+        maybeRunBot(room);
         return;
       }
 
@@ -476,15 +690,31 @@ server.listen(PORT, '0.0.0.0', () => {
   lines.push('  ============================================');
   lines.push('');
   lines.push('  怎么开局：');
-  lines.push('    1. 你自己先用「本机」地址打开页面，点「创建房间」拿到 4 位房间码');
-  lines.push('    2. 把上面那条「给朋友」的地址 + 房间码发给朋友');
-  lines.push('    3. 朋友连同一个 WiFi 打开地址，填入房间码，点「加入房间」就开局了');
+  lines.push('    · 单机：直接在页面上选「人机对战」或「同机双人」，点一下就开始');
+  lines.push('    · 联机：选「创建房间」，把上面那条「给朋友」的地址 + 4 位房间码发出去');
+  lines.push('      朋友连同一个 WiFi 打开地址，输入房间码点「加入房间」即可，支持 2~6 人');
   lines.push('');
   lines.push('  朋友打不开？多半是系统防火墙拦了 Node，允许「专用网络」即可。');
   lines.push('  关掉这个黑窗口就等于关掉服务。');
   lines.push('');
   process.stdout.write(lines.join('\n') + '\n');
+
+  // 从启动脚本双击进来的话顺手把页面弹出来，省得再手敲地址。
+  // 只在 PATCHWORK_OPEN=1 时做（bat 里设了），跑测试起服务端时不会乱开窗口。
+  openBrowserOnce(`http://localhost:${PORT}`);
 });
+
+/** 用系统默认浏览器打开一个地址（仅当显式开启时；失败也绝不影响服务） */
+function openBrowserOnce(url) {
+  if (process.platform !== 'win32') return;
+  if (process.env.PATCHWORK_OPEN !== '1') return;
+  try {
+    const { spawn } = require('child_process');
+    const p = spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore' });
+    p.on('error', () => {});
+    p.unref();
+  } catch (e) { /* 弹不出来就让用户自己点，不影响服务 */ }
+}
 
 /** 让 Windows 控制台按 UTF-8 解码，中文才不会乱码。 */
 function ensureUtf8Console() {
@@ -494,6 +724,23 @@ function ensureUtf8Console() {
     execSync('chcp 65001', { stdio: 'ignore' });
   } catch (e) { /* 切不了就算了 */ }
 }
+
+// 端口被占用时给一句人话，别甩 EADDRINUSE 让用户懵（多半是上次那个黑窗口还开着）
+server.on('error', (err) => {
+  if (err && err.code === 'EADDRINUSE') {
+    process.stdout.write([
+      '',
+      `  端口 ${PORT} 已经被占用了 —— 多半是上一次的服务窗口还开着。`,
+      '',
+      '  怎么办：先关掉那个黑窗口（或按任意键结束本窗口），再重新双击本脚本。',
+      '  想确认是谁占的：在命令行执行  netstat -ano | findstr :' + PORT,
+      '',
+    ].join('\n') + '\n');
+  } else {
+    process.stdout.write('\n  服务启动失败：' + (err && err.message ? err.message : err) + '\n\n');
+  }
+  process.exit(1);
+});
 
 // 单个连接出错不应拖垮整个服务
 server.on('clientError', (err, socket) => {

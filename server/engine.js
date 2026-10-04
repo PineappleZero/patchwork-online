@@ -31,10 +31,11 @@ function buildCircle(rng) {
   return ['A', ...rest];
 }
 
-function createPlayer(name, index) {
+function createPlayer(name, index, isBot) {
   return {
     index,
-    name: name || (index === 0 ? '玩家一' : '玩家二'),
+    name: name || `玩家${index + 1}`,
+    bot: Boolean(isBot),
     buttons: START_BUTTONS,
     time: 0,
     /** 拼布板：每格记录 complement / 补丁 id / 该补丁的朝向索引 */
@@ -127,11 +128,35 @@ function visiblePatchIds(state) {
   return ids;
 }
 
+/**
+ * 轮到谁行动：时间最靠后（落后）的先行动；
+ * 时间相同时，**后到达（叠在上方）**的那位先行动。
+ * 用 arrival 记录每位玩家最后一次落位的先后序号，人数 2 或更多都成立。
+ */
 function activePlayerIndex(state) {
-  const [p0, p1] = state.players;
-  if (p0.time < p1.time) return 0;
-  if (p1.time < p0.time) return 1;
-  return state.topPlayer; // 同一格时，后到达（叠在上方）的玩家先行动
+  let best = -1;
+  for (const p of state.players) {
+    if (best < 0) { best = p.index; continue; }
+    const b = state.players[best];
+    if (p.time < b.time) best = p.index;
+    else if (p.time === b.time && state.arrival[p.index] > state.arrival[best]) best = p.index;
+  }
+  return best;
+}
+
+/** 记录某位玩家刚落位，用于上面那条「同格谁在上」的判定 */
+function markArrival(state, playerIndex) {
+  state.moveSeq += 1;
+  state.arrival[playerIndex] = state.moveSeq;
+}
+
+/**
+ * 现在到底该谁动手：有待放置的皮革补丁时，只有那个人能操作（且必须操作）；
+ * 否则就是时间最落后的那位。服务端判定归属、前端高亮，都用这一条。
+ */
+function currentPlayerIndex(state) {
+  if (state.pendingLeather.length) return state.pendingLeather[0].player;
+  return activePlayerIndex(state);
 }
 
 function isGameOver(state) {
@@ -189,11 +214,23 @@ function placeOnBoard(player, patch, oriIndex, row, col, isLeather) {
   player.incomeIcons += patch.income;
 }
 
-/** 行动 A：前进到对手前方一格并领纽扣 */
+/**
+ * 行动 A：前进到「你前面最近的那位玩家」前方一格并领纽扣。
+ * - 两人时，你前面最近的玩家就是对手，行为和原版完全一致。
+ * - 多人时取「所有时间 >= 你 的玩家里最靠后的那位」（含同格的人），
+ *   因此不会出现一次跳过大半个赛场的情况。
+ * - 如果你已经领先所有人（前面没人），这步不前进、也不领纽扣，只当作过牌。
+ *   原实现会把你**倒着挪回去**，这是个 bug，这里一并用 max 挡住。
+ */
 function advance(state, playerIndex) {
   const player = state.players[playerIndex];
-  const other = state.players[1 - playerIndex];
-  const target = Math.min(other.time + 1, LAST_SPACE);
+  let frontier = null;
+  for (const p of state.players) {
+    if (p.index === playerIndex) continue;
+    if (p.time < player.time) continue;
+    if (frontier === null || p.time < frontier) frontier = p.time;
+  }
+  const target = frontier === null ? player.time : Math.min(frontier + 1, LAST_SPACE);
   const gained = Math.max(0, target - player.time);
   const from = player.time;
   player.time = target;
@@ -203,8 +240,12 @@ function advance(state, playerIndex) {
     player.finished = true;
     state.finishOrder.push(playerIndex);
   }
-  state.topPlayer = playerIndex;
-  return { action: 'advance', gained, events: [{ type: 'advance', gained, player: playerIndex }].concat(events) };
+  if (gained > 0) markArrival(state, playerIndex);
+  return {
+    action: 'advance',
+    gained,
+    events: [{ type: gained > 0 ? 'advance' : 'pass', gained, player: playerIndex }].concat(events),
+  };
 }
 
 /** 行动 B：买下并放置补丁 */
@@ -232,16 +273,18 @@ function buyPatch(state, playerIndex, patchId, oriIndex, row, col) {
   player.time = target;
   const events = resolveTimeEvents(state, player, from, target);
 
-  if (!player.hasBonusTile && hasFilledSquare(player.board, 7)) {
-    player.hasBonusTile = true;
+  // 7x7 奖励牌全场只有一块，先拼出来的人独占（原版规则）。
+  // 注意必须显式比 null —— 座位号 0 是 falsy，用 !bonusTileOwner 判会被 0 号骗过去。
+  if (state.bonusTileOwner === null && hasFilledSquare(player.board, 7)) {
     state.bonusTileOwner = playerIndex;
+    player.hasBonusTile = true;
     events.push({ type: 'bonusTile', player: playerIndex });
   }
   if (player.time >= LAST_SPACE && !player.finished) {
     player.finished = true;
     state.finishOrder.push(playerIndex);
   }
-  state.topPlayer = playerIndex;
+  markArrival(state, playerIndex);
   return {
     action: 'patch',
     patchId,
@@ -249,16 +292,24 @@ function buyPatch(state, playerIndex, patchId, oriIndex, row, col) {
   };
 }
 
-function createGame(names, rng = Math.random) {
+/**
+ * 开一局。players 可以是 ['甲','乙'] 这样的名字数组，
+ * 也可以是 [{ name, bot }] —— 多人局和人机局都走这一条。
+ */
+function createGame(players, rng = Math.random) {
+  const raw = (players && players.length ? players : ['玩家一', '玩家二']);
+  const list = raw.map((p) => (typeof p === 'string' ? { name: p } : (p || {})));
   const state = {
     circle: buildCircle(rng),
     neutral: 0, // 中立指示物位于 index-1（即最后一块之后）；可见的是 0,1,2
-    players: [createPlayer(names && names[0], 0), createPlayer(names && names[1], 1)],
+    players: list.map((p, i) => createPlayer(p.name, i, p.bot)),
     leatherClaimed: TIME_BOARD.map((k) => k !== 'leather'),
     pendingLeather: [], // 已获得但还没选落点的 1x1 皮革补丁
     bonusTileOwner: null,
     finishOrder: [],
-    topPlayer: 0,
+    /** 每位玩家最后一次落位的先后序号（同格时判定谁在上） */
+    arrival: list.map(() => 0),
+    moveSeq: 0,
     turnCount: 0,
     log: [],
   };
@@ -312,21 +363,38 @@ function score(state, playerIndex) {
   };
 }
 
+/**
+ * 终局结算，支持任意人数。
+ * winner 为 null 表示真·并列第一（总分相同、且到达终点的先后也一样）。
+ * ranking 是按名次排好的座位号，前端直接照着渲染排行榜。
+ */
 function finalResult(state) {
-  const scores = [score(state, 0), score(state, 1)];
-  let winner = null;
-  if (scores[0].total > scores[1].total) winner = 0;
-  else if (scores[1].total > scores[0].total) winner = 1;
-  else {
-    const first = state.finishOrder[0];
-    if (first !== undefined) winner = first;
+  const scores = state.players.map((p, i) => score(state, i));
+  const rankOfFinish = (i) => {
+    const k = state.finishOrder.indexOf(i);
+    return k < 0 ? Number.MAX_SAFE_INTEGER : k;
+  };
+
+  const order = state.players.map((p) => p.index).sort((a, b) => {
+    if (scores[b].total !== scores[a].total) return scores[b].total - scores[a].total;
+    return rankOfFinish(a) - rankOfFinish(b); // 同分看谁先到终点
+  });
+
+  const top = order[0];
+  const second = order[1];
+  let winner = top;
+  if (second !== undefined && scores[second].total === scores[top].total &&
+      rankOfFinish(second) === rankOfFinish(top)) {
+    winner = null; // 真并列
   }
-  return { scores, winner, finishOrder: state.finishOrder };
+
+  return { scores, winner, ranking: order, finishOrder: state.finishOrder.slice() };
 }
 
 module.exports = {
   createGame,
   activePlayerIndex,
+  currentPlayerIndex,
   isGameOver,
   legalActions,
   visiblePatchIds,
