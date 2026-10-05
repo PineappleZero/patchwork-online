@@ -209,6 +209,103 @@ function ok(cond, label, extra) {
         '「魔改版」分组小牌不再是紫色渐变填充', (c.tagBg || 'transparent').slice(0, 40));
     }
 
+    /* ---------- v1.6.2：手机适配 ----------
+       主测试窗口是桌面宽度，量不到手机断点。这里当场造一个 390x844 的
+       同源 iframe（就是 iPhone 14 的逻辑分辨率），在里面量：
+         · 有没有横向溢出（body.scrollWidth 不许超过视口）
+         · 首屏能不能摸到主要入口
+         · 触控目标够不够 44px
+         · 对局的补丁环滚不滚得到（v1.6.2 前是 grid auto 行把它压没的）
+       iframe 必须同源才能读 contentDocument —— 所以由页面自己造，src 用 /。 */
+    console.log('\n[1e] 手机适配（v1.6.2）');
+    {
+      const mob = await evaluate(ws, `(async function(){
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'position:fixed;left:-9999px;top:0;width:390px;height:844px;';
+        const fr = document.createElement('iframe');
+        fr.style.cssText = 'width:390px;height:844px;border:0;';
+        fr.src = '/';
+        wrap.appendChild(fr);
+        document.body.appendChild(wrap);
+        await new Promise((res) => { fr.onload = () => setTimeout(res, 1200); });
+        const d = fr.contentDocument, w = fr.contentWindow;
+        const vw = w.innerWidth, vh = w.innerHeight;
+        const q = (s) => d.querySelector(s);
+        const rectOf = (s) => { const e = q(s); if (!e) return null; const r = e.getBoundingClientRect(); return { t: r.top, b: r.bottom, l: r.left, r: r.right, w: r.width, h: r.height }; };
+
+        /* 主菜单：溢出 + 首屏可达 + 触控 */
+        const menuOverflow = d.body.scrollWidth - vw;
+        const soloR = rectOf('#btnSolo');
+        const createR = rectOf('#btnCreate');
+        const menuCard = rectOf('.menu-card');
+        const footR = rectOf('.menu-foot');
+        const footBtn = rectOf('.menu-foot .btn');
+        // 主菜单底部两个按钮必须是横排（v1.6.2 前被 flex 撑成 317px 高，文字竖排）
+        const footBtns = [...d.querySelectorAll('.menu-foot .btn')].map((b) => {
+          const r = b.getBoundingClientRect();
+          return { h: Math.round(r.height), w: Math.round(r.width) };
+        });
+
+        /* 触控目标：主菜单 + 对局里所有可点控件 */
+        const small = [];
+        d.querySelectorAll('#menu button, #menu input, #menu select').forEach((el) => {
+          const r = el.getBoundingClientRect();
+          if (r.height > 0 && r.height < 44) small.push((el.id || el.className) + '=' + Math.round(r.height));
+        });
+
+        /* 进对局，量对局页 */
+        q('#btnSolo').click();
+        await new Promise((res) => setTimeout(res, 3500));
+        const gameOverflow = d.body.scrollWidth - vw;
+        const bw = q('.board-wrap');
+        const scrollable = bw ? bw.scrollHeight - bw.clientHeight : 0;
+        const ringR = rectOf('.ring-panel');
+        const quiltR = rectOf('.player-card .quilt');
+        const gSmall = [];
+        d.querySelectorAll('#game button, #game select').forEach((el) => {
+          const r = el.getBoundingClientRect();
+          if (r.height > 0 && r.height < 44) gSmall.push((el.id || el.className) + '=' + Math.round(r.height));
+        });
+
+        wrap.remove();
+        return {
+          vw, vh, menuOverflow, gameOverflow,
+          solo: soloR && { t: Math.round(soloR.t), b: Math.round(soloR.b) },
+          create: createR && { t: Math.round(createR.t), b: Math.round(createR.b) },
+          cardH: menuCard && Math.round(menuCard.h),
+          footH: footR && Math.round(footR.h),
+          footBtns,
+          smallMenu: small, smallGame: gSmall,
+          scrollable: Math.round(scrollable),
+          ringTop: ringR && Math.round(ringR.t),
+          quiltInView: !!(quiltR && quiltR.t >= 0),
+        };
+      })()`);
+
+      ok(mob.menuOverflow <= 0, '手机端主菜单没有横向溢出',
+        `body.scrollWidth 超出 ${mob.menuOverflow}px`);
+      ok(mob.gameOverflow <= 0, '手机端对局页没有横向溢出（顶栏按钮会换行）',
+        `body.scrollWidth 超出 ${mob.gameOverflow}px`);
+      ok(mob.solo && mob.solo.t < mob.vh && mob.create && mob.create.t < mob.vh,
+        '手机首屏就能看到「人机对战」和「创建房间」',
+        `人机 top=${mob.solo && mob.solo.t} 创建 top=${mob.create && mob.create.t} 视口高=${mob.vh}`);
+      /* 卡片总高会随「局域网地址提示」是否展开而变，不作为硬指标；
+         真正要保证的是「主要入口在首屏」+「顶部不被顶出」（下面那条）。 */
+      ok(mob.solo.t >= 0, '主菜单顶部没有被顶出视口（v1.6.2 前 brand 的 top 是 -84）',
+        `人机 top=${mob.solo && mob.solo.t}px`);
+      ok(mob.footH <= 70,
+        '底部按钮区不再被 flex 撑高（v1.6.2 前是 317px，文字变竖排单字）',
+        `实际 ${mob.footH}px`);
+      ok(mob.footBtns.length === 2 && mob.footBtns.every((b) => b.h <= 60 && b.w > b.h),
+        '「规则与图例」「更新日志」是横排的矮按钮', JSON.stringify(mob.footBtns));
+      ok(mob.smallMenu.length === 0, '主菜单所有控件都 >= 44px（手指点得准）',
+        mob.smallMenu.join(', '));
+      ok(mob.smallGame.length === 0, '对局页所有控件都 >= 44px', mob.smallGame.join(', '));
+      ok(mob.scrollable > 0, '对局内容超出时能纵向滚动（v1.6.2 前补丁环被 grid 压没、滚不到）',
+        `可滚动 ${mob.scrollable}px`);
+      ok(mob.quiltInView, '手机进对局能先看见自己的拼布板（不被顶出视口）');
+    }
+
     const net = await evaluate(ws, `(function(){
       const box = document.getElementById('netHint');
       const code = document.getElementById('netUrl');
@@ -694,11 +791,11 @@ function ok(cond, label, extra) {
     })()`);
     ok(cl.show, '更新日志弹层能打开');
     ok(cl.vers >= 3, '包含 3 个及以上版本', '实际 ' + cl.vers);
-    ok(cl.first.indexOf('v1.6.1') === 0, '首条是 v1.6.1', cl.first);
-    ok(cl.items >= 3, 'v1.6.1 条目不少于 3 条', '实际 ' + cl.items);
-    ok(cl.versions.slice(0, 7).join(',') === 'v1.6.1,v1.6,v1.5.1,v1.5,v1.4.1,v1.4,v1.3',
+    ok(cl.first.indexOf('v1.6.2') === 0, '首条是 v1.6.2', cl.first);
+    ok(cl.items >= 5, 'v1.6.2 条目不少于 5 条（手机适配那几项）', '实际 ' + cl.items);
+    ok(cl.versions.slice(0, 7).join(',') === 'v1.6.2,v1.6.1,v1.6,v1.5.1,v1.5,v1.4.1,v1.4',
       '版本号是连续的（含补记的 1.1）', cl.versions.join(' / '));
-    await screenshot(ws, 'v161-4-changelog.png');
+    await screenshot(ws, 'v162-4-changelog.png');
 
     console.log('\n[4b] 音效开关：每个界面都能开关');
     await evaluate(ws, `document.getElementById('btnChangelogClose').click()`);

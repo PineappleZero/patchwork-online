@@ -1594,3 +1594,270 @@ kbd {
   .board-wrap.layout-frame { grid-template-columns: minmax(0, 1fr); }
   .board-wrap.layout-frame .center { width: 100%; }
 }
+
+/* ==================================================================
+   手机适配（v1.6.2）
+   ------------------------------------------------------------------
+   上面那几个断点是按「小平板 / 窄笔记本」调的，最小只到 780px。
+   真正的手机是 360~430px，落进来就拿不到任何针对性的规则，于是：
+
+     1) 对局页横向溢出（body.scrollWidth 411 > 视口 390）——
+        顶栏那一排按钮不肯换行，硬把 body 撑宽，整页能左右拖动；
+     2) 主菜单 .menu-card 在 390 宽下高达 1129px，而视口只有 844 高，
+        首屏被截断，得往下划好久才摸到「联机」；
+     3) 玩家拼布板被顶出视口（.players top = -65），开局后看不见自己的板；
+     4) 一堆按钮只有 19~37px 高，手指根本点不准（Apple 建议 >= 44px）。
+
+   这一层只做「窄屏收紧 + 触控放大」，不改任何桌面端观感。
+   ================================================================== */
+
+/* ---- 1. 触控目标：手机上凡是能点的，最小 44px ---- */
+@media (max-width: 480px) {
+  .btn,
+  .sfx-btn,
+  .mode-card,
+  .layout-switch button,
+  .topbar-actions .btn,
+  .menu-foot .btn,
+  .ov-actions .btn {
+    min-height: 44px;
+  }
+  /* tiny 按钮桌面端刻意做小，手机上单独抬起来 */
+  .btn.tiny {
+    min-height: 44px;
+    padding: 0 12px;
+    font-size: 12.5px;
+  }
+  .sfx-btn.compact {
+    min-height: 44px;
+    padding: 0 10px;
+  }
+  /* 表单控件同理：iOS 上小于 16px 的输入框还会触发自动放大 */
+  input[type="text"],
+  select {
+    min-height: 44px;
+    font-size: 16px;
+  }
+}
+
+/* ---- 2. 主菜单：把纵向长度压下来，首屏能看到主要入口 ---- */
+@media (max-width: 480px) {
+  #menu {
+    /* 刘海屏 / 手势条躲开 */
+    padding: 12px 10px calc(16px + env(safe-area-inset-bottom));
+    /* 手机上卡片通常比屏幕高，绝不能用居中 —— 内容一超高，居中会把顶部
+       （标题布片、名字输入框）顶到负坐标、永远滚不回来。
+       桌面端的 justify-content:center 在这里改回 flex-start。 */
+    align-items: flex-start;
+    justify-content: flex-start;
+  }
+  .menu-card {
+    width: 100%;
+    max-width: 100%;
+    /* 关键：桌面端那句 margin:auto 在 flex 列容器里会吃掉垂直剩余空间，
+       把卡片顶出上边界、又在底部留一大块空白。手机上必须只保留横向居中。 */
+    margin: 0 auto;
+    padding: 16px 14px 14px;
+    border-radius: 13px;
+  }
+
+  /* 标题布片收一档，省下约 40px */
+  .tile {
+    width: 46px;
+    height: 46px;
+    font-size: 28px;
+    border-radius: 8px;
+  }
+  .tile::before { inset: 4px; border-width: 1.5px; }
+  .title { gap: 9px; }
+  .subtitle { margin-top: 6px; font-size: 11px; letter-spacing: .16em; }
+  .brand-deco { margin-top: 7px; }
+  .deco-btn { width: 14px; height: 14px; }
+  .deco-hourglass { width: 15px; height: 20px; }
+
+  /* 粗分隔线矮一半，四条线全省下约 40px */
+  .menu-rule { margin: 10px 0; }
+
+  /* 名字 + 音效那一行：名字占满，音效按钮跟在下面 */
+  .menu-top { gap: 8px; }
+  .menu-top .field { flex: 1 1 100%; }
+
+  /* 玩法卡片压薄，但保留 44px 触控高度 */
+  .mode-card {
+    padding: 10px 13px;
+    margin-bottom: 8px;
+  }
+  .mode-card b { font-size: 14.5px; }
+  .mode-card small { font-size: 11.5px; margin-top: 2px; }
+
+  .sec-title { margin-bottom: 8px; font-size: 12.5px; }
+
+  /* 单机 / 联机两栏在手机上必然上下排，把中间的竖线换成横线 */
+  .menu-grid { grid-template-columns: 1fr; gap: 0; }
+  .menu-grid .menu-sec + .menu-sec {
+    border-left: none;
+    padding-left: 0;
+    border-top: 2px solid var(--line);
+    margin-top: 16px;
+    padding-top: 14px;
+  }
+
+  /* 魔改版那一排两张小卡在窄屏上再压一点，别挤成两行 */
+  .variant-row { gap: 8px; }
+  .variant-row .mode-card { padding: 9px 10px; }
+  .variant-row .mode-card b { font-size: 13.5px; }
+
+  .inline-field { margin-bottom: 8px; gap: 8px; }
+  .inline-field > span { font-size: 12.5px; }
+
+  /* 底部两个按钮：手机上换成 grid 两列等宽。
+     原来是 flex + .btn{flex:1 1 0}，实测在窄屏下 .menu-foot 会被撑到 317px
+     高，按钮里的文字被挤成竖排单字（flex-basis:0 配合 stretch 的怪行为）。
+     grid 没有这个坑，两列各 1fr，按钮高度由 min-height 决定。 */
+  .menu-foot {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    height: auto;
+  }
+  .menu-foot .btn {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    padding: 0 8px;
+  }
+}
+
+/* ---- 3. 对局页：窄屏重排，杜绝横向溢出 ---- */
+@media (max-width: 480px) {
+  html, body { overflow: hidden; }
+
+  /* 顶栏是横向溢出的元凶 —— 允许换行，并让出刘海区 */
+  .topbar {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 10px calc(8px + env(safe-area-inset-top));
+    row-gap: 6px;
+  }
+  .topbar-actions {
+    flex-wrap: wrap;
+    gap: 6px;
+    width: 100%;
+  }
+  .topbar-actions .btn { flex: 1 1 auto; }
+  .room-tag, .mode-tag, .turn-tag { font-size: 11.5px; }
+  /* 房间号那一长串在手机上会撑宽，允许它收缩 */
+  .room-tag {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* 主体一律单列、纵向滚动，玩家板排在上面（先看见自己的板）。
+     注意：这里必须用 flex 而不是 grid —— grid 的 auto 行会把内容压缩进
+     容器高度（实测 .board-wrap scrollH == clientH，补丁环被裁掉且滚不到），
+     flex 才让子项溢出容器、激活 overflow-y:auto。 */
+  .board-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 8px;
+    gap: 8px;
+    /* 底部手势条 */
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  }
+  .players,
+  .center {
+    flex: none;        /* 不许被压缩，超出就让 .board-wrap 滚 */
+  }
+  .players { overflow: visible; }
+  .board-wrap[data-n] .players { grid-template-columns: minmax(0, 1fr); }
+  .players .player-card { max-width: 100%; }
+
+  /* 中央栏：补丁环 + 时间板整体缩到手机宽度内 */
+  .center { width: 100%; order: 2; min-width: 0; }
+  .ring-panel { padding: 8px; }
+  .ring-stage {
+    --ring-d: 236px;
+    --tb-cell: 17px;
+    max-width: 100%;
+  }
+  .ring-front .patch-shape { height: 42px; }
+  .ring-label { flex-wrap: wrap; gap: 6px; }
+  .rl-title { font-size: 12.5px; }
+
+  /* 圆角矩形环绕（绕拼布板）在手机上没空间，一律退回圆环 */
+  .board-wrap.layout-frame { grid-template-columns: minmax(0, 1fr); }
+  .board-wrap.layout-frame .center { width: 100%; }
+  /* 布局切换开关在手机上藏掉（只有双人局会出现，且框摆不下） */
+  .layout-switch { display: none; }
+
+  /* 拼布板本身缩到屏幕内 */
+  .quilt { max-width: 100%; }
+
+  /* 底部操作区（旋转/镜像/跳过/确认）横向排布，按钮等宽好点。
+     注意 align-items:center —— flex 默认 stretch 会把这些按钮纵向撑满，
+     高度一旦跟着容器长，里面的文字就变竖排单字了。 */
+  .actions,
+  .ov-actions {
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+  .actions .btn,
+  .ov-actions .btn { flex: 1 1 auto; align-self: center; }
+
+  /* 底部操作条：.act-right 里四个按钮不换行会顶破视口
+     （实测 left=56 + 355 = 411 > 390），这里让它换行、并把信息行折到上一行。 */
+  .actionbar {
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 8px;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+  }
+  .act-left { flex: 1 1 100%; }
+  .sel-info { font-size: 12.5px; }
+  .act-right {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .act-right .btn {
+    flex: 1 1 calc(50% - 4px);   /* 两列排布 */
+    align-self: center;
+    min-width: 0;
+    padding: 0 8px;
+    white-space: nowrap;
+  }
+  /* 键盘快捷键提示在手机上没意义（没键盘），去掉能省不少宽度 */
+  .act-right kbd { display: none; }
+
+  /* 环绕布局那圈 padding 是给桌面留轨道的，手机上把整块撑爆 */
+  .board-wrap.layout-frame .players { padding: 16px; }
+  .frame-stage { max-width: 100%; }
+  .frame-guide { inset: var(--fp, 26px); }
+}
+
+/* ---- 4. 防溢出兜底：手机上任何元素都不许把 body 撑宽 ---- */
+@media (max-width: 480px) {
+  /* 桌面端有几个容器带了固定/最小宽度，手机上统一允许压到视口内，
+     否则整页能左右拖动（实测 body.scrollWidth 411 > 390）。 */
+  #menu, #game, .board-wrap, .players, .center, .ring-panel,
+  .ring-stage, .ring-core, .timeboard, .actionbar, .topbar {
+    max-width: 100%;
+    min-width: 0;
+  }
+  .menu-card, .mode-card, .player-card, .quilt {
+    max-width: 100%;
+    min-width: 0;
+  }
+  /* 长串（房间码 / 局域网地址 / 日志行）一律可断行，别横向顶开 */
+  code, .nh-row code, .log-line, #netUrl {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+}
