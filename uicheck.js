@@ -261,19 +261,24 @@ function ok(cond, label, extra) {
         const scrollable = bw ? bw.scrollHeight - bw.clientHeight : 0;
         const ringR = rectOf('.ring-panel');
         const quiltR = rectOf('.player-card .quilt');
-        /* v1.6.3：窄屏必须退回「环绕时间板」。
-           「绕拼布板」要求两块板左右并排，手机只能上下叠 —— 那块区域被拉成
-           359×696 的竖条，33 块补丁绕它一圈直接顶到屏幕两边（用户说的「错位」）。 */
+        /* v1.6.3 起：窄屏的环绕方式。
+           v1.6.3 曾一刀切禁掉 frame；v1.6.5 又放开了（双人局 .players 已并排，
+           正好是这套布局要的横向矩形）。所以这里不再断言「必须/不许 frame」，
+           而是按实际模式分别量对应的可视化区域。 */
         const frameOn = !!(bw && bw.classList.contains('layout-frame'));
         const switchHidden = !q('#layoutSwitch') || q('#layoutSwitch').hidden;
-        /* v1.6.4：环的几何 + 操作条可达。
-           · 环必须是正圆：JS 从 .ring-guide 反算半径，guide 宽=高才是正圆
-           · 环的直径要撑到容器宽度（v1.6.4 前写死 236px，只用掉 341 里的 69%，
-             弧长不够 → 远处补丁被缩成 3px 碎点，看着就是「错位」）
-           · 操作条（旋转/镜像）必须在首屏内，不该逼用户往下滑 */
+        const canSwitch = d.querySelectorAll('.player-card').length === 2;
+        /* v1.6.4/v1.6.5：可视化区域的几何 + 操作条可达。
+           · 走圆环时：.ring-guide 宽=高（正圆），直径要撑到容器宽度
+             （v1.6.4 前写死 236px，只用掉 341 里的 69%，弧长不够 → 补丁缩成碎点）
+           · 走框架时：.frame-stage 是个横向矩形且贴住 .players
+           · 不管哪种，操作条（旋转/镜像）都必须在首屏内 */
         const guide = q('.ring-guide');
         const ringGuideW = guide ? Math.round(guide.offsetWidth) : 0;
         const ringGuideH = guide ? Math.round(guide.offsetHeight) : 0;
+        const fstage = q('.frame-stage');
+        const frameBox = fstage ? (() => { const r = fstage.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height), visible: w.getComputedStyle(fstage).display !== 'none' }; })() : null;
+        const vizW = frameOn ? (frameBox ? frameBox.w : 0) : ringGuideW;
         const panelR = rectOf('.ring-panel');
         const abR = rectOf('.actionbar');
         const rotateR = rectOf('#btnRotate');
@@ -311,10 +316,11 @@ function ok(cond, label, extra) {
           scrollable: Math.round(scrollable),
           ringTop: ringR && Math.round(ringR.t),
           quiltInView: !!(quiltR && quiltR.t >= 0),
-          frameOn, switchHidden,
+          frameOn, switchHidden, canSwitch,
           patchN,
           patchSpan: patchN ? [Math.round(patchMinL), Math.round(patchMaxR)] : null,
           ringGuideW, ringGuideH,
+          frameBox, vizW,
           ringPanel: panelR && { t: Math.round(panelR.t), b: Math.round(panelR.b) },
           actionbarTop: abR && Math.round(abR.t),
           rotateTop: rotateR && Math.round(rotateR.t),
@@ -345,17 +351,26 @@ function ok(cond, label, extra) {
       ok(mob.scrollable > 0, '对局内容超出时能纵向滚动（v1.6.2 前补丁环被 grid 压没、滚不到）',
         `可滚动 ${mob.scrollable}px`);
       ok(mob.quiltInView, '手机进对局能先看见自己的拼布板（不被顶出视口）');
-      ok(!mob.frameOn, '手机上不会切到「绕拼布板」（v1.6.3 前那块区域被拉成 696px 高的竖条，补丁顶到屏幕两边）');
-      ok(mob.switchHidden, '手机上看不到布局切换开关');
+      /* 环绕方式：v1.6.5 起手机上两种都开放（默认跟桌面一样走 frame）。
+         这里只要求「选中的那套布局确实渲染出来了、而且没把补丁甩出视口」。 */
+      if (mob.frameOn) {
+        ok(mob.frameBox && mob.frameBox.visible && mob.frameBox.w > 200 && mob.frameBox.h > 100,
+          '手机上「绕拼布板」的舞台是个站得住的横向矩形',
+          mob.frameBox ? `${mob.frameBox.w}×${mob.frameBox.h}` : '没渲染');
+      } else {
+        ok(mob.ringGuideW > 0 && mob.ringGuideW === mob.ringGuideH,
+          '补丁环是正圆（.ring-guide 宽高相等）',
+          `guide ${mob.ringGuideW}×${mob.ringGuideH}`);
+        ok(mob.ringGuideW >= 300,
+          '手机上的环要撑到容器宽度（v1.6.4 前写死 236px → 补丁缩成碎点）',
+          `环直径 ${mob.ringGuideW}px`);
+      }
+      ok(mob.switchHidden === false || !mob.canSwitch,
+        '双人局在手机上也能切环绕方式（v1.6.5 前开关被藏掉）',
+        `hidden=${mob.switchHidden} canSwitch=${mob.canSwitch}`);
       ok(mob.patchSpan === null || (mob.patchSpan[0] >= -1 && mob.patchSpan[1] <= mob.vw + 1),
         '补丁横向都在视口内',
         mob.patchSpan ? `补丁 ${mob.patchSpan[0]}~${mob.patchSpan[1]}，视口 0~${mob.vw}（共 ${mob.patchN} 块）` : '对局早期还没补丁');
-      ok(mob.ringGuideW > 0 && mob.ringGuideW === mob.ringGuideH,
-        '补丁环是正圆（.ring-guide 宽高相等）',
-        `guide ${mob.ringGuideW}×${mob.ringGuideH}`);
-      ok(mob.ringGuideW >= 300,
-        '手机上的环要撑到容器宽度（v1.6.4 前写死 236px，只用掉 69% 宽度 → 补丁缩成碎点）',
-        `环直径 ${mob.ringGuideW}px`);
       ok(mob.chipMin === 0 || mob.chipMin >= 3,
         '环上最小的补丁不能缩成一个点（v1.6.4 前是 2.2px 基准、实测 3px）',
         mob.chipMin ? `最小 ${mob.chipMin}px / 最大 ${mob.chipMax}px` : '还没补丁');
@@ -851,11 +866,11 @@ function ok(cond, label, extra) {
     })()`);
     ok(cl.show, '更新日志弹层能打开');
     ok(cl.vers >= 3, '包含 3 个及以上版本', '实际 ' + cl.vers);
-    ok(cl.first.indexOf('v1.6.4') === 0, '首条是 v1.6.4', cl.first);
-    ok(cl.items >= 4, 'v1.6.4 条目不少于 4 条（手机环那几修）', '实际 ' + cl.items);
-    ok(cl.versions.slice(0, 9).join(',') === 'v1.6.4,v1.6.3,v1.6.2,v1.6.1,v1.6,v1.5.1,v1.5,v1.4.1,v1.4',
+    ok(cl.first.indexOf('v1.6.5') === 0, '首条是 v1.6.5', cl.first);
+    ok(cl.items >= 4, 'v1.6.5 条目不少于 4 条（手机开 frame 那几项）', '实际 ' + cl.items);
+    ok(cl.versions.slice(0, 10).join(',') === 'v1.6.5,v1.6.4,v1.6.3,v1.6.2,v1.6.1,v1.6,v1.5.1,v1.5,v1.4.1,v1.4',
       '版本号是连续的（含补记的 1.1）', cl.versions.join(' / '));
-    await screenshot(ws, 'v164-4-changelog.png');
+    await screenshot(ws, 'v165-4-changelog.png');
 
     console.log('\n[4b] 音效开关：每个界面都能开关');
     await evaluate(ws, `document.getElementById('btnChangelogClose').click()`);

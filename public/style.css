@@ -942,6 +942,22 @@ kbd {
   outline-color: #fff;
   box-shadow: 0 0 0 3px rgba(232, 181, 99, .45);
 }
+/* v1.6.5：框上被选中的那枚补丁，额外**放大 + 金色描边**。
+   手机上框上格子只有 7px，一枚 3×3 补丁才 21px 见方 —— 点「旋转」后形状确实变了，
+   但这个变化在 21px 里实在看不出来，用户会以为「按了没反应」。
+   把格子边长临时提到 1.35 倍 + 加粗描边，转一下就能看清朝向变没变。
+   （用 --rc-tile 而不是 transform：chip 自己的 transform 已经被
+   translate(...) scale(...) 占用了，再叠一层会把位置带偏。） */
+.board-wrap.layout-frame .ring-chip.picked {
+  z-index: 6;
+  --rc-tile: 9.5px;                  /* 7px × 1.35 */
+}
+.board-wrap.layout-frame .ring-chip.picked .rc-grid {
+  outline: 2px solid var(--gold);
+  outline-offset: 4px;
+  box-shadow: 0 0 0 4px rgba(232, 181, 99, .3), 0 0 14px rgba(232, 181, 99, .6);
+  border-radius: 3px;
+}
 @keyframes chipBreath {
   0%, 100% { filter: drop-shadow(0 0 0 rgba(232, 181, 99, 0)); }
   50% { filter: drop-shadow(0 0 5px rgba(232, 181, 99, .9)); }
@@ -1803,11 +1819,20 @@ kbd {
   .ring-label { flex-wrap: wrap; gap: 6px; }
   .rl-title { font-size: 12.5px; }
 
-  /* 圆角矩形环绕（绕拼布板）在手机上没空间，一律退回圆环 */
+  /* 圆角矩形环绕（绕拼布板）在手机上**也用**（v1.6.5）。
+     双人局的 .players 已经是左右并排的横向矩形，正好是这套布局要的形状；
+     空带由 JS 的 frameBand() 按窄屏收窄（20~30px，不再是桌面那 66~94px），
+     框上格子也降到 7px（frameTile()）。这里只要保证舞台贴得住 .players 就行。 */
   .board-wrap.layout-frame { grid-template-columns: minmax(0, 1fr); }
   .board-wrap.layout-frame .center { width: 100%; }
-  /* 布局切换开关在手机上藏掉（只有双人局会出现，且框摆不下） */
-  .layout-switch { display: none; }
+  /* frame 布局下 .players 的桌面兜底是 padding:94px，手机上必须收掉 ——
+     真实值由 JS 的 frameBand() 写成内联样式（手机上约 25px），
+     这里补一条同权重的窄屏规则，万一 JS 还没跑到也不会炸。 */
+  .board-wrap.layout-frame .players {
+    padding: 24px;
+    width: 100%;
+  }
+  /* 布局切换开关放出来（frame 布局在窄屏也站得住了） */
 
   /* 拼布板本身缩到屏幕内。
      v1.6.4：手机上环（341px 直径）才是主操作区，拼布板再收一档把高度让给它 ——

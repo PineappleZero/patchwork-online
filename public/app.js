@@ -604,7 +604,7 @@ const FRAME = { insetMax: 30, corner: 34, tile: 10, gap: 1 };
  * 但下限必须**罩得住最宽那块补丁的半宽**，否则补丁会骑到舞台外面去。
  */
 function frameInset(w, h) {
-  const halfMax = Math.ceil(ringBaseMax(FRAME.tile, FRAME.gap) / 2) + 1;   // 5×8px 那块 → 23
+  const halfMax = Math.ceil(ringBaseMax(frameTile(), FRAME.gap) / 2) + 1;
   return Math.max(halfMax, Math.min(FRAME.insetMax, Math.round(Math.min(w, h) * 0.045)));
 }
 
@@ -683,9 +683,20 @@ function framePath(w, h, P) {
  * 因此 frame 布局下中间那列也会同步收窄（见 CSS 的 .board-wrap.layout-frame）。
  * 宽度按 .players 的实际宽度给：它由 CSS 的 width: min(100%, 1000px) 定死，
  * 跟内边距无关，所以能安全地先量宽度再定内边距。
+ *
+ * v1.6.5：下限从写死的 66px 改成**按舞台尺寸算**，手机上才放得下。
+ *   390px 宽的手机上 .players 只有 359px，再左右各留 66px 就只剩 227px
+ *   给两块拼布板（每块 ~110px），板子会被压得看不清针脚。
+ *   带子只要「罩得住最大那块补丁的半身位」就够 —— 手机把框上格子收到 7px，
+ *   最大 5×5 补丁 = 5×7+4 = 39px，半身位约 20px，加描边给 24px 绰绰有余。
  */
 function frameBand(players) {
   const w = players.getBoundingClientRect().width;
+  const narrow = typeof window !== 'undefined' && window.innerWidth <= 480;
+  if (narrow) {
+    // 窄屏：带子跟着宽度走，20~30px 就够了（框上格子也同步收窄，见 frameTile）
+    return Math.max(20, Math.min(30, Math.round(w * 0.07)));
+  }
   return Math.max(66, Math.min(94, Math.round(w * 0.09)));
 }
 
@@ -706,14 +717,23 @@ function syncFrameBox() {
   return { w, h };
 }
 
+/** 框上小补丁的格子边长。桌面 10px（v1.5 定的，隔着半米也认得出形状）；
+ *  手机上收一档 —— 舞台本来就只有 359×190，10px 的格子会让补丁大得挤在一起。
+ *  这个值同时被 CSS 的 --rc-tile 用（见 renderRing 里写进 .ring-stage）。 */
+function frameTile() {
+  const narrow = typeof window !== 'undefined' && window.innerWidth <= 480;
+  return narrow ? 7 : FRAME.tile;
+}
+
 /** 圆角矩形这一套的「摆哪儿」：等弧长摊开、全部正放、一样大 */
 function buildFrameLayout(box, N) {
+  const tile = frameTile();
   const inset = frameInset(box.w, box.h);
   const geo = framePath(box.w, box.h, inset);
   const arc = geo.total / Math.max(1, N);
   const scale = Math.min(1, Math.max(
-    (arc * 0.92) / ringBaseMax(FRAME.tile, FRAME.gap),
-    RING.minTile / FRAME.tile,
+    (arc * 0.92) / ringBaseMax(tile, FRAME.gap),
+    RING.minTile / tile,
   ));
   const cx = box.w / 2;
   const cy = box.h / 2;
@@ -866,14 +886,15 @@ function renderRing() {
 
   // 环绕方式：「绕拼布板」只给双人局，人少了多了都退回「环绕时间板」
   const canSwitch = st.players.length === 2;
-  /* v1.6.3：手机上禁用「绕拼布板」。
-     这套布局靠 frameBand() 给 .players 留一圈 66~94px 的空带去塞补丁轨道，
-     而且要求两块拼布板**左右并排**（#frameStage 才是个方正的矩形）。
-     手机上 .players 只能单列纵向堆叠，于是 #frameStage 变成 359×696 的高瘦矩形，
-     33 块补丁绕着它排一圈就直接顶到屏幕两边 —— 就是用户看到的「错位」。
-     宽度不够时一律退回「环绕时间板」，那条路本来就能自适应缩放。 */
-  const narrow = typeof window !== 'undefined' && window.innerWidth <= 480;
-  const wantFrame = canSwitch && !narrow && S.layout === 'frame' && N > 0;
+  /* v1.6.5：手机上**开放**「绕拼布板」。
+     v1.6.3 曾一刀切禁掉它，理由是手机上 .players 只能单列纵向堆叠
+     → #frameStage 变成长竖条 → 补丁绕它一圈顶出屏幕。
+     但那一版同时把双人局的 .players 改成了**左右并排**（grid 1fr 1fr），
+     现在手机上 .players 是 359×190 的横向矩形 —— 正是这套布局需要的形状。
+     配套把空带（frameBand）和框上格子（frameTile）也按窄屏收窄，
+     所以框架在手机上站得住了。窗口太窄（<320px）时仍会退回圆环，见下面 useFrame 的兜底。 */
+  const wantFrame = canSwitch && S.layout === 'frame' && N > 0;
+  const isNarrow = typeof window !== 'undefined' && window.innerWidth <= 480;
   const wrap = $('boardWrap');
   const players = $('playersWrap');
   // 顺序很要紧：先挂布局类（.players 的宽度当场就定死了，而且不随内边距变），
@@ -884,7 +905,11 @@ function renderRing() {
   let box = null;
   if (wantFrame) {
     const b = syncFrameBox();
-    if (b && b.w > 120 && b.h > 120) box = b;
+    /* 舞台太扁/太窄就退回圆环 —— 圆角矩形路径要有足够的地方摊开补丁。
+       手机上 .players 是 359×190，扣掉空带后舞台约 309×140，
+       低于这个尺寸硬摆会把补丁挤成一坨，还不如圆环清楚。 */
+    const minSide = isNarrow ? 110 : 120;
+    if (b && b.w > minSide && b.h > minSide) box = b;
   }
   const useFrame = Boolean(box);
   const mode = useFrame ? 'frame' : 'ring';
@@ -902,8 +927,9 @@ function renderRing() {
   }
   const sw = $('layoutSwitch');
   if (sw) {
-    /* 手机上不给切（上面 narrow 那段解释了原因），开关索性藏掉 */
-    sw.hidden = !canSwitch || narrow;
+    /* v1.6.5：手机上重新放出来 —— 现在 frame 布局在窄屏也能站住，
+       用户想切就切（默认仍然走 CSS 给的那个）。 */
+    sw.hidden = !canSwitch;
     Array.from(sw.children).forEach((b) => {
       b.classList.toggle('on', b.dataset.layout === mode);
     });
@@ -918,7 +944,7 @@ function renderRing() {
 
   // 补丁格子的边长也在这里定：环上 6px、框上 8px。
   // 写成 CSS 变量挂在装补丁的那一层上，chip 本身不用重建就能换档。
-  far.style.setProperty('--rc-tile', (useFrame ? FRAME.tile : RING.tile) + 'px');
+  far.style.setProperty('--rc-tile', (useFrame ? frameTile() : RING.tile) + 'px');
   far.style.setProperty('--rc-gap', (useFrame ? FRAME.gap : RING.gap) + 'px');
 
   const alive = new Set();
@@ -1699,8 +1725,19 @@ function escapeHtml(s) {
 /* ---------------- 更新日志 ---------------- */
 const CHANGELOG = [
   {
-    v: 'v1.6.4',
+    v: 'v1.6.5',
     date: '当前',
+    items: [
+      '<b>手机上也能「绕拼布板」了</b>：v1.6.3 曾把这条路在窄屏封掉（怕补丁排到屏幕外），现在解开了 —— 因为双人局的拼布板早就是<b>左右并排</b>的横向矩形，正好是这套布局要的形状。',
+      '<b>框上补丁不再挤成一团</b>：手机上把轨道空带从 66~94px 收到 20~30px、框上格子从 10px 降到 7px，两块拼布板才不会为了腾轨道被压扁。',
+      '<b>点「旋转」终于看得出来变了</b>：手机上框上格子只有 7px，一枚 3×3 补丁才 21px 见方 —— 转了朝向但太小看不出来，容易以为「按了没反应」。现在<b>被选中的那枚会放大 1.35 倍、套上金色描边</b>。',
+      '<b>环绕方式开关回来了</b>：双人局在手机上也能在「环绕时间板 / 绕拼布板」之间切。',
+      '太窄的屏幕（舞台不足 110px）仍会自动退回圆环 —— 那种尺寸下圆角矩形挤不下，圆环更清楚。',
+    ],
+  },
+  {
+    v: 'v1.6.4',
+    date: '上一版',
     items: [
       '<b>手机上的补丁环终于圆了</b>：之前环的直径被写死 236px，只用掉屏幕宽度的 69% —— 环周长不够摊开那么多补丁，远处的就被透视缩成 3px 的小点，糊在圆周上看着像「错位」。现在环撑满可用宽度（341px），补丁大小均匀、位置清清楚楚。',
       '<b>环上的补丁不再缩成一个点</b>：最小格子从 2.2px 提到 3.4px，配上更大的环，最小的补丁也有 4px（原来只有 3px）。',
@@ -1711,7 +1748,7 @@ const CHANGELOG = [
   },
   {
     v: 'v1.6.3',
-    date: '上一版',
+    date: '更早',
     items: [
       '<b>手机上对局不再「错位」了</b>：真机上打开双人局，补丁会绕着拼布板排出去、顶到屏幕两边。原因是「绕拼布板」这套布局要求两块板<b>左右并排</b>，而手机只能上下叠 —— 那块区域被拉成一根又高又瘦的竖条，33 块补丁绕它一圈自然就豁出去了。',
       '<b>窄屏自动换回「环绕时间板」</b>：手机上一律走那条能自适应缩放的路线，布局开关也一并收起来，不会再误切到不合适的模式。',
