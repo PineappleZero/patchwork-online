@@ -482,24 +482,36 @@ function evalPosition(state, mySeat, remaining, alpha, beta) {
 }
 
 /**
+ * 读环境变量里的数字参数（调参用）。
+ * ⚠️ 浏览器（web/ 静态版）里没有 process —— v1.6.7 发布时这里直接写
+ * `Number(process.env.XXX)`，pw-core.js 一加载就 ReferenceError，
+ * 静态版「人机对战点不开」。必须走这个助手：浏览器里安全落到默认值。
+ */
+function envNum(name, fallback) {
+  if (typeof process === 'undefined' || !process.env) return fallback;
+  const v = Number(process.env[name]);
+  return Number.isFinite(v) && v > 0 ? v : fallback;
+}
+
+/**
  * 给**对手**未来潜力的折扣（1 = 完全承认，<1 = 打折）。
  * 圈是共享的，对手未必真能吃到他要的补丁，所以打折后 hard 更敢抢、
  * 不会因为「对手理论上也能填」就畏手畏脚。
  */
-const OPP_POTENTIAL = Number(process.env.PW_OPP_POT) || 0.75;
+const OPP_POTENTIAL = envNum('PW_OPP_POT', 0.75);
 
 /** 对手回应的候选上限（对手也要筛，不然多层会炸） */
-const OPP_REPLY_TOP = Number(process.env.PW_OPP_TOP) || 16;
+const OPP_REPLY_TOP = envNum('PW_OPP_TOP', 16);
 
 /** 轮到我时的候选上限（比对手那层更窄，成本更敏感） */
-const SELF_REPLY_TOP = Number(process.env.PW_SELF_TOP) || 10;
+const SELF_REPLY_TOP = envNum('PW_SELF_TOP', 10);
 
 /**
  * 搜索层数（我 → 对手 → 我 → …）。有 Alpha-Beta 剪枝兜着，
  * 6 层也跑得动；层数越多越强，超时由 searchDeadline 兜底。
  * 扫参实测（各 100 局）：6 层对 normal 80.0%，4 层（310 局合计）约 77%。
  */
-const SEARCH_DEPTH = Number(process.env.PW_DEPTH) || 6;
+const SEARCH_DEPTH = envNum('PW_DEPTH', 6);
 
 /**
  * 当前这次决策的截止时刻（毫秒时间戳）。由 chooseAction 在开始搜索前设好，
@@ -573,7 +585,7 @@ const LOOKAHEAD_TOP = 80;
  * 正常局面 ~30ms 就搜完了；钱多、可选补丁多的大局面会膨胀到几百毫秒，
  * 超过这个上限就收缩候选宽度。500ms 是给六层深搜留的口子，落子仍不至卡顿。
  */
-const TIME_BUDGET_MS = Number(process.env.PW_BUDGET) || 500;
+const TIME_BUDGET_MS = envNum('PW_BUDGET', 500);
 
 /** 按合法动作规模挑初始候选宽度：动作越多，每个候选越贵，宽度就收小 */
 function top0Width(actionCount) {
@@ -591,7 +603,7 @@ function top0Width(actionCount) {
  * 归一化到「本批候选里的相对排名」再混 —— 见 chooseAction 里的 z-score。
  * MIX 由实测扫描确定，越大越偏「该买就买」，越小越偏「算细账」。
  */
-const MIX = Number(process.env.PW_MIX) || 0.55;
+const MIX = envNum('PW_MIX', 0.55);
 
 /** 归一化：把一组数变成 z-score（均值 0、标准差 1）；全相等时返回全 0 */
 function zscores(arr) {

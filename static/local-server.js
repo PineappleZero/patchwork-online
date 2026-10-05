@@ -338,7 +338,11 @@
         }
         this.room = new LocalRoom(mode, {
           variant: msg.variant,
-          botLevel: msg.botLevel,
+          // ⚠️ app.js 发的字段是 `level`（与服务端 index.js 一致）。
+          // 以前这里读 `msg.botLevel` —— 那个字段从来没人发过，
+          // normalizeLevel(undefined) 永远落 normal：静态版选「困难」
+          // 实际打的是普通人机（v1.6.6 起就中招）。两个字段都认，防再犯。
+          botLevel: msg.level !== undefined ? msg.level : msg.botLevel,
           name1: msg.name,
           name2: msg.name2,
         });
