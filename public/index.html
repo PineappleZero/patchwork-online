@@ -43,8 +43,7 @@
 
     <div class="menu-rule" aria-hidden="true"></div>
 
-    <!-- 单机与联机左右并排；每块里经典版在上、魔改版在下，用一条小分隔带隔开。
-         v1.6.1：金调（classic）给经典版，魔改版退回中性灰 —— 让第一眼落在上方的经典版上。 -->
+    <!-- 单机与联机左右并排；经典版卡片用金调（v1.6.1 起）。 -->
     <div class="menu-grid">
 
       <div class="menu-sec">
@@ -52,6 +51,10 @@
         <button id="btnSolo" class="mode-card classic" data-mode="solo" data-variant="classic">
           <b>人机对战</b>
           <small>经典规则，和 wzzzhhhhh 下一局</small>
+        </button>
+        <button id="btnTourney" class="mode-card classic" data-variant="classic">
+          <b>锦标赛 · 挑战困难</b>
+          <small>赢 wzzzhhhhh，净分上排行榜</small>
         </button>
         <button id="btnLocal" class="mode-card classic" data-mode="local" data-variant="classic">
           <b>同机双人</b>
@@ -65,17 +68,6 @@
             <option value="easy">轻松</option>
           </select>
         </div>
-
-        <div class="variant-head"><span class="vh-tag">魔改版</span><span class="vh-sub">混沌拼布</span></div>
-        <div class="variant-row">
-          <button class="mode-card chaos" data-mode="solo" data-variant="chaos">
-            <b>人机对战</b><small>挑战 wzzzhhhhh</small>
-          </button>
-          <button class="mode-card chaos" data-mode="local" data-variant="chaos">
-            <b>同机双人</b><small>两人轮流</small>
-          </button>
-        </div>
-        <p class="variant-hint" data-chaos-hint>混沌拼布的规则见「规则与图例」</p>
       </div>
 
       <div class="menu-sec">
@@ -102,11 +94,6 @@
           <button id="btnJoin" class="btn">加入房间</button>
         </div>
 
-        <div class="variant-head"><span class="vh-tag">魔改版</span><span class="vh-sub">混沌拼布</span></div>
-        <button class="mode-card chaos" data-mode="online" data-variant="chaos">
-          <b>创建房间 · 魔改版</b>
-          <small>0 纽扣起步，混沌格随机发牌</small>
-        </button>
         <p class="variant-hint">加入别人的房间时，规则跟着房主走。</p>
       </div>
 
@@ -229,23 +216,19 @@
 </div>
 
 <!-- ============ 规则与图例 ============
-     同一个弹层，主菜单和游戏里共用。区别只在「看多少」：
-       · 从主菜单打开 → 经典 + 魔改 全看（经典排在前，魔改单独一节压在最后）
-       · 从对局里打开 → 只显示当前这一局用的那套
-     实现方式：JS 给 #rulesModal 挂 data-scope（both / classic / chaos），
-     变体差异用 <span class="rv rv-classic|rv-chaos" data-tag="…"> 包起来，
-     CSS 按 data-scope 决定显示哪些、以及在 both 模式下补上「经典／魔改」小标签。 -->
+     v1.7 起只讲经典规则（魔改版入口已下架），主菜单和对局页共用这一个弹层。
+     全部按「第一次玩桌游」的视角写：先一分钟看懂，再逐条展开。 -->
 <div id="rulesModal" class="overlay">
   <div class="overlay-card wide">
-    <h2>规则与图例<span id="rulesScopeTag" class="scope-tag" hidden></span></h2>
+    <h2>规则与图例</h2>
     <div class="ov-body rules-body">
 
       <div class="rules-sec">
-        <h3>目标</h3>
-        <p>把补丁缝到自己的 9×9 拼布板上，尽量填满、尽量多剩纽扣。</p>
-        <p class="formula rv rv-classic" data-tag="经典版"><span class="vtag">经典版</span>最终得分 ＝ 剩余纽扣 ＋ 7×7 奖励（+7） － 空格数 × 2</p>
-        <p class="formula rv rv-chaos" data-tag="魔改版"><span class="vtag">魔改版</span>最终得分 ＝ 剩余纽扣 ＋ 7×7 奖励（+14） － 空格数 × 3</p>
-        <p>负分是正常的。得分最高者获胜；<b>同分时，先抵达终点的人获胜</b>。</p>
+        <h3>一分钟看懂</h3>
+        <p>这是个「拼布比赛」：大家轮流从<b>补丁环</b>上买补丁，缝到自己的 <b>9×9 拼布板</b>上。买补丁要花两样东西 —— <b>纽扣</b>（钱）和<b>时间</b>（步数）。花的时间越多，对手就越可能连着行动，所以「买得便宜」和「走得快」要自己权衡。</p>
+        <p>所有人的时间令牌都走到终点（第 53 格）时游戏结束，一起数分：<b>剩的纽扣 ＋ 填板的奖励 － 空格罚分</b>，分高者赢。</p>
+        <p class="formula">最终得分 ＝ 剩余纽扣 ＋ 7×7 奖励（+7） － 空格数 × 2</p>
+        <p class="note">不用背公式 —— 对局结束会自动算好、标出赢家。负分也是正常现象，前期缺钱很常见。</p>
       </div>
 
       <div class="rules-sec">
@@ -255,13 +238,13 @@
       </div>
 
       <div class="rules-sec">
-        <h3>每回合二选一</h3>
+        <h3>轮到你时，二选一</h3>
         <p><b>行动 A · 跳过领纽扣</b><br>
           把时间令牌走到<b>你前面最近那位玩家</b>的前方一格，每前进 1 格就从供应堆领 1 个纽扣。
           两人局时，那位就是你的对手。如果你已经领先全场，这一步不前进也不领纽扣。</p>
         <p class="note">如果眼前那几块补丁一块都买不起，右下角的「跳过领纽扣」会<b>放大闪动</b>提醒你 —— 这一步最容易忘。</p>
         <p><b>行动 B · 买补丁</b>（固定 5 步）<br>
-          ① 从中立棋子前方那几块里挑一块（<span class="rv rv-classic" data-tag="经典">3 块</span><span class="rv rv-chaos" data-tag="魔改">4 块</span>）→ ② 棋子移到该块的位置（只前移不后退）→ ③ 付掉卡片上标的纽扣 → ④ 放到自己板上任意不重叠、不越界的位置（可旋转 / 镜像）→ ⑤ 时间令牌按卡片上的砂漏数前进。</p>
+          ① 从中立棋子前方那 <b>3 块</b>里挑一块 → ② 棋子移到该块的位置（只前移不后退）→ ③ 付掉卡片上标的纽扣 → ④ 放到自己板上任意不重叠、不越界的位置（可旋转 / 镜像）→ ⑤ 时间令牌按卡片上的砂漏数前进。</p>
         <p class="note">补丁一旦放下就不能再移动，也不会被拿回。</p>
       </div>
 
@@ -274,7 +257,7 @@
 
       <div class="rules-sec">
         <h3>7×7 奖励与结束</h3>
-        <p>先在自己板上拼出完整无洞的 <b>7×7</b> 方块，得 <span class="rv rv-classic" data-tag="经典版"><b>+7</b> 分</span><span class="rv rv-chaos" data-tag="魔改版"><b>+14</b> 分</span>。<b>全场只有一块奖励牌</b>，被第一个拼出的人拿走，之后谁再拼出来也没有加分。</p>
+        <p>先在自己板上拼出完整无洞的 <b>7×7</b> 方块，得 <b>+7 分</b>。<b>全场只有一块奖励牌</b>，被第一个拼出的人拿走，之后谁再拼出来也没有加分。</p>
         <p>所有人的令牌都到达第 53 格时对局结束。若某次前进会超出终点，令牌停在 53，只按实际走过的格数领纽扣。</p>
       </div>
 
@@ -286,7 +269,6 @@
           <div class="lg-row"><span class="lg-swatch tb-leather"></span><span><b>皮革格</b>：先到者获得 1×1 补丁</span></div>
           <div class="lg-row"><span class="lg-swatch tb-claimed"></span><span>皮革格已被领走（变暗，后来者拿不到）</span></div>
           <div class="lg-row"><span class="lg-swatch tb-end"></span><span><b>终点格 53</b>：同时也是最后一枚纽扣格</span></div>
-          <div class="lg-row" data-rules="chaos"><span class="lg-swatch tb-chaos"></span><span><b>混沌格</b>：经过时随机触发一件事（只有魔改版才有）</span></div>
           <div class="lg-row"><span class="lg-swatch tok-me"></span><span><b>当前行动方</b>的时间令牌：带金色描边，下一步由他先动</span></div>
           <div class="lg-row"><span class="lg-swatch tok-opp"></span><span>其他玩家的时间令牌，每人一种颜色（人多时同一格会排成小方阵）</span></div>
         </div>
@@ -306,16 +288,20 @@
           <div class="lg-row"><span class="lg-num t">4 时间</span><span>买下后时间令牌前进几格</span></div>
           <div class="lg-row"><span class="lg-num inc">+2</span><span>它带来的纽扣收益图标数</span></div>
         </div>
+        <div class="legend legend-card">
+          <div class="lg-title">轨道数值签（v1.7 新增）</div>
+          <div class="lg-row"><span class="lg-swatch tag-sample"><i class="c">3</i><i class="t">4</i><i class="i">+1</i></span><span><b>每块补丁脚边都挂着一个小签</b>，不用点开卡片就能读：金数 = 要花几纽扣 · 蓝数 = 走几格时间 · 绿数 = 每轮赚几纽扣（±0 表示没有收益）</span></div>
+        </div>
       </div>
 
       <div class="rules-sec">
         <h3>三种玩法</h3>
-        <p><b>人机对战</b>：你和 <b>wzzzhhhhh</b> 单挑，建房即开局。<b>同机双人</b>：一台设备上两人轮流操作，轮到谁就替谁落子（不必藏着看，本作没有隐藏信息）。<b>联机对战</b>：2~6 人，房主可以提前开始，也可以等人坐满自动开始。</p>
+        <p><b>人机对战</b>：你和 <b>wzzzhhhhh</b> 单挑，点开就开局（可选普通 / 困难 / 轻松）。<b>同机双人</b>：一台设备上两人轮流操作，轮到谁就替谁落子（不必藏着看，本作没有隐藏信息）。<b>联机对战</b>：2~6 人，房主可以提前开始，也可以等人坐满自动开始。</p>
       </div>
 
       <div class="rules-sec">
         <h3>补丁环 · 两种环绕方式</h3>
-        <p><span class="rv rv-classic" data-tag="经典"><b>33 块补丁</b></span><span class="rv rv-chaos" data-tag="魔改">从 33 块里<b>随机抽 26 块</b></span>沿外圈摆放，<b>每局重新洗牌，位置都不一样</b>。金色的<b>中立棋子</b>永远停在正前方那格的逆时针一侧，它顺时针方向前面那几块（<span class="rv rv-classic" data-tag="经典">3 块</span><span class="rv rv-chaos" data-tag="魔改">4 块</span>）就是你现在能买的。</p>
+        <p><b>33 块补丁</b>沿外圈摆放，<b>每局重新洗牌，位置都不一样</b>。金色的<b>中立棋子</b>永远停在正前方那格的逆时针一侧，它顺时针方向前面那 <b>3 块</b>就是你现在能买的。</p>
         <p>买走一块，棋子就前移一格、整圈跟着转（<b>只前移不后退</b>）。</p>
         <p><b>① 绕拼布板（双人局默认）</b>：环从圆变成贴着两块拼布板的<b>圆角矩形</b>，补丁沿着四条边等距摊开、<b>全部正着放、一样大小</b>，格子比圆环上大一档，所以每一块都看得清清楚楚。中立棋子停在<b>上方那条轨道</b>上，紧挨着第一块可选补丁。</p>
         <p><b>② 环绕时间板</b>：环是个圆，圆心就是时间板本身（9 列 × 6 行，正好 54 格），像实物那样「环在外、盘在内」。环上越靠后的补丁画得越小，那只是远近的视觉提示。</p>
@@ -328,22 +314,6 @@
         <p>点环下方那几张卡片选补丁，<b>或者直接点环上／框上带金色描边的那几块</b> → 鼠标在<b>自己（或当前行动方）的拼布板</b>上移动，落点实时预览（绿＝可放，红＝不可），<b>补丁会盖住鼠标停的那一格</b> → <b>左键点一下</b>固定位置（固定后预览不再跟手，可以放心去点按钮）→ 点右下角<b>确认放置</b>。</p>
         <p>联机时，你的鼠标一动，对手那边的拼布板上就会出现一块半透明预览，他看得见你在琢磨什么；反过来也一样。</p>
         <p class="note">右键或 <kbd>Esc</kbd>：解除固定 ／ <kbd>R</kbd> 旋转 ／ <kbd>F</kbd> 镜像 ／ <kbd>空格</kbd> 跳过领纽扣 ／ <kbd>Enter</kbd> 确认放置</p>
-      </div>
-
-      <!-- 只有魔改版才显示的一节。刻意排在全部经典规则之后。 -->
-      <div class="rules-sec chaos-sec" data-rules="chaos">
-        <h3>魔改版 · 混沌拼布</h3>
-        <p>就是主菜单里带紫色「<b>魔改版</b>」标签的那几个入口。补丁的形状和数值一个没改，改的是<b>规则参数</b>和<b>时间板上多出来的一件事</b>，玩起来完全是另一种节奏：</p>
-        <div class="legend legend-card">
-          <div class="lg-row"><span class="lg-num">0 纽扣</span><span>开局手上一个纽扣都没有，第一手只能先跳过挣点本钱</span></div>
-          <div class="lg-row"><span class="lg-num">4 选 1</span><span>中立棋子前方能看到 <b>4 块</b>补丁，可选面更宽</span></div>
-          <div class="lg-row"><span class="lg-num">26 块</span><span>每局只从 33 块里随机抽 26 块进环，环更短、转得更快，几局之间长得都不一样</span></div>
-          <div class="lg-row"><span class="lg-num">+14</span><span>7×7 奖励翻倍</span></div>
-          <div class="lg-row"><span class="lg-num">×3</span><span>每空一格罚 3 分，摆烂的代价更贵</span></div>
-        </div>
-        <p><b>混沌格</b>：时间板上多出 3 个紫色格子（第 <b>12 / 30 / 48</b> 格），经过或停在上面都会随机触发一件事 ——</p>
-        <p class="formula" id="chaosEventHint">天赐 · 苛捐 · 命运交换 · 时间跃迁</p>
-        <p class="note">埋的是什么在开局就抽好了，踩上去才揭晓。<b>苛捐</b>纽扣不够时只扣到 0 为止，永远不会变成负数；<b>时间跃迁</b>额外走的那两格不再触发混沌格，但途中的纽扣格照收。</p>
       </div>
 
     </div>
@@ -360,6 +330,30 @@
     <div class="ov-body log-body" id="changelogBody"></div>
     <div class="ov-actions">
       <button id="btnChangelogClose" class="btn primary">知道了</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 锦标赛（v1.7） ============ -->
+<div id="tourneyModal" class="overlay">
+  <div class="overlay-card wide">
+    <h2>锦标赛 · 挑战困难 wzzzhhhhh</h2>
+    <div class="ov-body tw-body">
+      <div class="tw-join">
+        <input id="twName" type="text" maxlength="12" placeholder="参赛昵称（必填，最多 12 字）" autocomplete="off">
+        <button id="btnTourneyGo" class="btn primary">开始挑战</button>
+      </div>
+      <p class="tw-err" id="twErr" hidden>先填一个参赛昵称，才能上战场。</p>
+      <p class="tw-hint">固定<b>困难档</b>单挑 wzzzhhhhh，按「你的总分 − wzzzhhhhh 总分」从高到低排名。每一局的对战时间、行动和得分构成都会记下来，点下面的记录行就能回看。</p>
+      <p class="tw-stats" id="twStats"></p>
+      <div id="twList" class="tw-list"></div>
+      <p class="tw-empty" id="twEmpty" hidden>还没有人上榜 —— 交个昵称，赢下第一局！</p>
+      <div class="tw-foot">
+        <button id="btnTourneyClear" class="btn tiny">清空记录</button>
+      </div>
+    </div>
+    <div class="ov-actions">
+      <button id="btnTourneyClose" class="btn primary">关掉</button>
     </div>
   </div>
 </div>

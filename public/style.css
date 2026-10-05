@@ -242,37 +242,8 @@ html, body {
   padding-left: 22px;
 }
 
-/* 「魔改版」分组的小标题带。
-   v1.6.1 起这块牌改成中性灰 —— 原来它是紫的，比下面所有入口都抢眼，
-   第一眼全落在魔改版上，经典版反而像个附庸。现在只有经典版带金。 */
-.variant-head {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin: 16px 0 9px;
-}
-.variant-head::after {
-  content: '';
-  flex: 1;
-  min-width: 8px;
-  height: 1px;
-  background: var(--line-soft);
-}
-.vh-tag {
-  flex: none;
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: .08em;
-  color: var(--text-dim);
-  background: var(--bg-soft);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 2px 8px;
-}
-.vh-sub { flex: none; font-size: 10.5px; color: var(--text-faint); letter-spacing: .04em; }
-
-.variant-row { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
-.variant-row .mode-card { margin-bottom: 0; }
+/* v1.7：主菜单的「魔改版」分组与入口已整体下架，
+   .variant-head / .vh-tag / .vh-sub / .variant-row / .mode-card.chaos 一并移除。 */
 
 .variant-hint {
   margin: 9px 0 0;
@@ -282,11 +253,9 @@ html, body {
 }
 
 /*
- * 经典版 = 金调，魔改版 = 中性灰（v1.6.1 对调过来的）。
- *
- * 改之前是反的：魔改版紫底紫边、标题也是浅紫，经典版却和普通卡片一样是灰的。
- * 结果就是「第一眼看到的是魔改版」—— 而经典版才是主菜、又排在前面。
- * 现在把重量压在经典版上：金底 + 金边 + 金字，魔改版退回普通卡片的灰。
+ * 经典版 = 金调（v1.6.1 起）。
+ * 原本魔改版紫底紫边、比经典版还抢眼；v1.6.1 对调成经典版金底金边金字。
+ * v1.7 魔改版入口下架后，金调就是唯一的主卡样式。
  */
 .mode-card.classic {
   background: linear-gradient(150deg, #2b2418, #1b1e29 62%);
@@ -297,18 +266,6 @@ html, body {
   background: linear-gradient(150deg, #342b1c, #202531 62%);
 }
 .mode-card.classic b { color: var(--gold); }
-
-/* 魔改版：不加任何颜色，跟普通卡片一样 —— 但留一点点区隔感，
-   免得它跟上面的经典版糊成一片（细一档的边框 + 稍暗的底）。 */
-.mode-card.chaos {
-  background: var(--bg-soft);
-  border-color: var(--line-soft);
-}
-.mode-card.chaos:hover {
-  border-color: var(--line);
-  background: #1d2230;
-}
-.mode-card.chaos b { color: var(--text); }
 
 
 .menu-sec {
@@ -943,6 +900,44 @@ kbd {
 }
 .rc-grid i.off { background: transparent; box-shadow: none; }
 
+/* ---------------- v1.7：轨道数值签 ----------------
+   「这块几个纽扣 / 走几格时间 / 每轮赚多少」直接写在补丁脚边，
+   不用悬停或点开大卡片才知道 —— 1.0 起的老坑。配色与规则页图例
+   一致：金 = 纽扣消耗、蓝 = 时间格数、绿 = 每轮增益。
+   字号固定不随轨道远近缩放；签不拦点击（点了算点补丁）；与 chip
+   同生命周期（placeChips 摆位、买走时一起淡出）。 */
+.rc-tag {
+  position: absolute;
+  left: 50%; top: 50%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 9px;
+  background: rgba(16, 19, 26, .92);   /* --bg 压深，盖住轨道虚线 */
+  border: 1px solid var(--line);
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 700;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 7;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .45);
+  transition: transform .42s cubic-bezier(.34, .8, .3, 1), opacity .22s ease;
+}
+.rc-tag .c { color: var(--gold); }
+.rc-tag .t { color: var(--blue); }
+.rc-tag .i { color: var(--green); }
+/* 窄舞台变体：三行竖排。轨道上相邻补丁间距 ~27px，横排签 48px+ 必互压，
+   竖排 ~22px 宽刚好塞进间距里（左右两列则贴到补丁内侧的空当）。 */
+.rc-tag.stack {
+  flex-direction: column;
+  gap: 1px;
+  padding: 3px 4px;
+  font-size: 9px;
+  border-radius: 7px;
+}
+
 /* ---------------- 可选补丁的标注 ----------------
    中立指示物前方那 3 块，在环上／框上也要一眼认出来，还能直接点。
    买得起 → 金色实描边 + 呼吸光晕 + 可点；买不起 → 细虚线，只是告诉你「轮到它们了」。 */
@@ -1268,6 +1263,88 @@ kbd {
 .ov-body .win { color: var(--green); font-weight: 600; }
 .ov-body .lose { color: var(--red); }
 
+/* ---------------- 锦标赛（v1.7） ---------------- */
+.tw-join { display: flex; gap: 8px; margin-bottom: 8px; }
+.tw-join input[type="text"] { flex: 1; min-width: 0; }
+.tw-join .btn { flex: none; }
+.tw-err { margin: 0 0 8px; color: var(--red); font-size: 12.5px; }
+.tw-hint { margin: 0 0 10px; font-size: 12.5px; color: var(--text-faint); line-height: 1.8; }
+.tw-hint b { color: var(--gold); }
+.tw-stats { margin: 0 0 10px; font-size: 13px; color: var(--text-dim); }
+.tw-stats b { color: var(--text); font-variant-numeric: tabular-nums; }
+.tw-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.tw-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 8px 12px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+.tw-row:hover { border-color: var(--gold-dim); }
+.tw-rank {
+  flex: none;
+  min-width: 24px;
+  text-align: center;
+  font-weight: 700;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.tw-row:first-child .tw-rank { color: var(--gold); }
+.tw-name {
+  flex: 1;
+  min-width: 60px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.tw-badge { flex: none; font-weight: 800; font-variant-numeric: tabular-nums; }
+.tw-badge.win { color: var(--green); }
+.tw-badge.lose { color: var(--red); }
+.tw-badge.even { color: var(--text-dim); }
+.tw-score { flex: none; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.tw-date { flex: none; margin-left: auto; font-size: 11px; color: var(--text-faint); }
+.tw-detail {
+  flex-basis: 100%;
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  cursor: default;
+}
+.tw-drow { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; padding-bottom: 6px; }
+.tw-drow span { color: var(--text-faint); }
+.tw-drow b { color: var(--text-dim); font-weight: 600; font-variant-numeric: tabular-nums; }
+.tw-detail .score-table { margin-bottom: 8px; }
+.tw-detail .score-table th:first-child,
+.tw-detail .score-table td.rk { min-width: 34px; white-space: nowrap; }
+.tw-actions-label { font-size: 12px; color: var(--text-faint); margin-bottom: 4px; }
+.tw-actions {
+  max-height: 180px;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--text-dim);
+  background: var(--panel-2);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+}
+.tw-muted { color: var(--text-faint); }
+.tw-foot { margin-top: 10px; display: flex; justify-content: flex-end; }
+.tw-empty { margin: 4px 0 10px; font-size: 13px; color: var(--text-faint); text-align: center; }
+
 /* ---------------- 等待开局 ---------------- */
 .wait-code {
   margin: 0 0 8px;
@@ -1399,107 +1476,9 @@ kbd {
   font-size: 13px;
 }
 
-/* ---------------- 规则里的「按变体显示」 ----------------
-   两套规则不一样的数字和句子，用 <span class="rv rv-classic|rv-chaos" data-tag="…">
-   包起来，整节只有魔改版才有的内容直接写 data-rules="chaos"。
-   #rulesModal 上的 data-scope 决定看多少：
-     both    —— 从主菜单打开：两套都显示，经典在前、魔改整节压在最后，
-                并在每处差异前面补一个「经典版／魔改版」小标签
-     classic —— 对局里打开：只留经典的
-     chaos   —— 对局里打开：只留魔改的
-   这样「进游戏后只显示当前这一版」不用拆成两份文案。 */
-/* 行内的变体差异：两套一起看时，前面补一个「经典／魔改」小标签，
-   中间自动加一个「／」分隔符 —— 所以 HTML 里不用手写这两样东西。 */
-.rv { display: inline; }
-.rv:not(.formula) + .rv:not(.formula)::before {
-  content: '／';
-  color: var(--text-faint);
-  margin: 0 3px;
-}
-#rulesModal[data-scope="classic"] .rv-chaos,
-#rulesModal[data-scope="chaos"] .rv-classic { display: none; }
-/* 整节只在某个版本里才有的（比如魔改版的混沌拼布）直接挂 data-rules */
-#rulesModal[data-scope="classic"] [data-rules="chaos"],
-#rulesModal[data-scope="chaos"] [data-rules="classic"] { display: none; }
-
-#rulesModal[data-scope="both"] .rv:not(.formula)::before {
-  content: attr(data-tag);
-  display: inline-block;
-  margin-right: 6px;
-  padding: 0 7px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: .04em;
-  color: #2a1c08;
-  background: linear-gradient(120deg, #f0d191, #c89541);
-  vertical-align: 1px;
-}
-/* 上面那条会把「／」也覆盖掉，这里给后一个重新补回来，并换成紫色 */
-#rulesModal[data-scope="both"] .rv:not(.formula) + .rv:not(.formula)::before {
-  content: '／' attr(data-tag);
-  margin-left: 10px;
-  color: #1a1226;
-  background: linear-gradient(120deg, #d59cf0, #8f6fd0);
-}
-
-/* 整块的差异（比如得分公式）：标签写在 <span class="vtag"> 里，默认不显示，
-   只有「两套一起看」时才露出来，并且单独占一行压在公式上面。 */
-.vtag { display: none; }
-#rulesModal[data-scope="both"] .formula > .vtag {
-  display: block;
-  width: fit-content;
-  margin: 0 0 5px;
-  padding: 1px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: .04em;
-}
-#rulesModal[data-scope="both"] .formula.rv-classic > .vtag {
-  color: #2a1c08;
-  background: linear-gradient(120deg, #f0d191, #c89541);
-}
-#rulesModal[data-scope="both"] .formula.rv-chaos > .vtag {
-  color: #1a1226;
-  background: linear-gradient(120deg, #d59cf0, #8f6fd0);
-}
-
-/* 弹层标题右边那枚「这一局是哪一版」的标记 */
-.scope-tag {
-  display: inline-block;
-  margin-left: 10px;
-  padding: 2px 10px;
-  border-radius: 999px;
-  font-size: 11.5px;
-  font-weight: 700;
-  letter-spacing: .06em;
-  vertical-align: 2px;
-}
-.scope-tag[hidden] { display: none; }
-.scope-tag.classic { color: #2a1c08; background: linear-gradient(120deg, #f0d191, #c89541); }
-.scope-tag.chaos { color: #1a1226; background: linear-gradient(120deg, #d59cf0, #8f6fd0); }
-
-/* 魔改版那一节用一道粗虚线缝住，一眼看出它跟上面是一整套 */
-.rules-body .chaos-sec {
-  margin-top: 26px;
-  padding-top: 6px;
-  border-top: 3px dashed rgba(201, 139, 224, .32);
-}
-.rules-body .chaos-sec h3 { margin-top: 14px; color: #d9bdf0; }
-
-/* 图例里那枚混沌格色块，跟时间板上真正的格子长一个样 */
-.tb-chaos {
-  background: linear-gradient(155deg, #3d2b58, #2a2340);
-  box-shadow: inset 0 0 0 1px rgba(201, 139, 224, .34);
-}
-.tb-chaos::after {
-  content: '';
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #f0d6ff, #8f6fd0 72%);
-}
+/* ---------------- 规则弹层 ----------------
+   v1.7 起只讲经典规则（魔改版入口已下架），按变体显示的
+   rv / data-scope / scope-tag 机制一并移除。 */
 
 .legend { display: flex; flex-direction: column; gap: 7px; }
 .legend-card {
@@ -1567,6 +1546,25 @@ kbd {
 .lg-num.cost { color: var(--gold); }
 .lg-num.t { color: var(--blue); }
 .lg-num.inc { color: var(--green); }
+/* 图例里那枚「轨道数值签」的迷你样本，长得跟轨道上真的一模一样（v1.7） */
+.lg-swatch.tag-sample {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  width: auto;
+  min-width: 0;
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: rgba(16, 19, 26, .92);
+  border: 1px solid var(--line);
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1;
+}
+.lg-swatch.tag-sample i { font-style: normal; }
+.lg-swatch.tag-sample .c { color: var(--gold); }
+.lg-swatch.tag-sample .t { color: var(--blue); }
+.lg-swatch.tag-sample .i { color: var(--green); }
 
 .ov-actions { display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end; }
 
@@ -1740,11 +1738,6 @@ kbd {
     margin-top: 16px;
     padding-top: 14px;
   }
-
-  /* 魔改版那一排两张小卡在窄屏上再压一点，别挤成两行 */
-  .variant-row { gap: 8px; }
-  .variant-row .mode-card { padding: 9px 10px; }
-  .variant-row .mode-card b { font-size: 13.5px; }
 
   .inline-field { margin-bottom: 8px; gap: 8px; }
   .inline-field > span { font-size: 12.5px; }

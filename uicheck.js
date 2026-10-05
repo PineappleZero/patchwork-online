@@ -5,7 +5,7 @@
  * 覆盖：主菜单（布片标题 + 拼布带 + 粗分隔线 + 左右并排 + 联机网址）/
  *       规则弹层按版本分开显示（主菜单看全套、对局里只看当前这一版）/
  *       音效开关 / 人机对战 / 双人默认「绕拼布板」的放大轨道与中立棋子 /
- *       补丁环包住时间板 / 可选补丁的标注与点选 / 魔改版混沌拼布 /
+ *       补丁环包住时间板 / 可选补丁的标注与点选 / 轨道数值签（v1.7） /
  *       跳过按钮高亮 / 事件纪要滚动 / 更新日志 / 六人联机。
  *
  * 用两个 Edge 实例：A 跑单机部分，B 跑联机部分。
@@ -124,6 +124,7 @@ function ok(cond, label, extra) {
         cards: document.querySelectorAll('.mode-card').length,
         classicCards: document.querySelectorAll('.mode-card[data-variant="classic"]').length,
         chaosCards: document.querySelectorAll('.mode-card.chaos').length,
+        chaosHeads: document.querySelectorAll('.variant-head').length,
         menuGridCols: getComputedStyle(q('.menu-grid')).gridTemplateColumns.split(' ').length,
         sfxToggles: document.querySelectorAll('[data-sfx-toggle]').length,
         // v1.5.1：标题改成两块「布片」，每块要有布纹底 + 一圈虚线缝脚
@@ -147,8 +148,7 @@ function ok(cond, label, extra) {
         // v1.6.6：单机难度多了「困难」档
         botLevels: Array.from(document.querySelectorAll('#botLevel option')).map((o) => o.value),
         botLevelLabels: Array.from(document.querySelectorAll('#botLevel option')).map((o) => o.textContent),
-        /* v1.6.1：金调归经典版、魔改版退回中性灰。
-           取的是实际算出来的样式，不是 class 在不在 —— 免得 CSS 写错还判通过。 */
+        /* v1.6.1：金调归经典版。v1.7 起魔改版入口下架，只剩金调主卡。 */
         cardColors: (() => {
           const pick = (sel) => {
             const el = document.querySelector(sel);
@@ -160,13 +160,9 @@ function ok(cond, label, extra) {
               title: b ? getComputedStyle(b).color : '',
             };
           };
-          const tag = document.querySelector('.variant-head .vh-tag');
           return {
             classic: pick('.mode-card.classic[data-mode="solo"]'),
-            chaos: pick('.mode-card.chaos[data-mode="solo"]'),
             classicCount: document.querySelectorAll('.mode-card.classic').length,
-            tagBg: tag ? getComputedStyle(tag).backgroundImage : '',
-            tagColor: tag ? getComputedStyle(tag).color : '',
           };
         })(),
         visible: rect.top >= -2 && rect.bottom <= window.innerHeight + 2,
@@ -174,10 +170,11 @@ function ok(cond, label, extra) {
       };
     })()`);
     ok(menu.missing.length === 0, '菜单控件齐全', '缺 ' + JSON.stringify(menu.missing));
-    ok(menu.cards === 6, '经典与魔改 × 单机与联机，一共 6 个开局入口', '实际 ' + menu.cards);
-    ok(menu.classicCards === 3 && menu.chaosCards === 3,
-      '经典版 3 个（人机 + 同机 + 联机），魔改版也 3 个',
+    ok(menu.cards === 4, 'v1.7 共 4 个开局入口（人机/锦标赛/同机/联机）', '实际 ' + menu.cards);
+    ok(menu.classicCards === 4 && menu.chaosCards === 0,
+      '4 个入口全是经典版，魔改版入口一个不剩',
       `经典 ${menu.classicCards} / 魔改 ${menu.chaosCards}`);
+    ok(menu.chaosHeads === 0, '「魔改版」分组小标题也摘掉了', '实际 ' + menu.chaosHeads);
     ok(menu.menuGridCols === 2, '单机与联机两块左右并排', menu.menuGridCols + ' 列');
     ok(menu.sfxToggles === 2, '主菜单和对局页各有一个音效开关', '实际 ' + menu.sfxToggles);
     ok(menu.titleTiles === 2, '标题是两块「布片」拼出来的', '实际 ' + menu.titleTiles + ' 块');
@@ -197,24 +194,15 @@ function ok(cond, label, extra) {
       menu.botLevelLabels.join(' / '));
     ok(menu.visible, '菜单整卡在视口内', `高 ${menu.h} / 视口 ${menu.vh}`);
 
-    /* ---------- v1.6.1：金调归经典版、魔改版退回中性灰 ---------- */
-    console.log('\n[1d] 主菜单配色：经典版金、魔改版灰（v1.6.1）');
+    /* ---------- v1.6.1：金调归经典版；v1.7：魔改版入口下架 ---------- */
+    console.log('\n[1d] 主菜单配色：经典版金（v1.6.1 起，v1.7 起是唯一主卡）');
     {
       const c = menu.cardColors;
-      ok(c.classicCount === 3, '三张经典版卡片都带上了 classic 类', '实际 ' + c.classicCount);
+      ok(c.classicCount === 4, '四张经典版卡片都带上了 classic 类', '实际 ' + c.classicCount);
       ok(c.classic && /232,\s*181,\s*99/.test(c.classic.title),
         '经典版标题是金色（--gold #e8b563）', c.classic && c.classic.title);
       ok(c.classic && /166,\s*127,\s*60/.test(c.classic.border),
         '经典版边框是暗金（--gold-dim #a67f3c）', c.classic && c.classic.border);
-      ok(c.chaos && !/232,\s*181,\s*99/.test(c.chaos.title),
-        '魔改版标题不是金色（不跟经典版抢）', c.chaos && c.chaos.title);
-      // 魔改版边框应该比经典版「淡」：原先那版是 #4b3a6b 的紫，现在该是 --line-soft
-      ok(c.chaos && !/75,\s*58,\s*107/.test(c.chaos.border),
-        '魔改版边框不是原来的紫色（#4b3a6b）', c.chaos && c.chaos.border);
-      ok(c.chaos && !/linear-gradient\(150deg,\s*rgb\(37,\s*29,\s*54\)/.test(c.chaos.bg || ''),
-        '魔改版没有紫底渐变，退回普通卡片', (c.chaos && c.chaos.bg || '').slice(0, 46));
-      ok(!/gradient/.test(c.tagBg || ''),
-        '「魔改版」分组小牌不再是紫色渐变填充', (c.tagBg || 'transparent').slice(0, 40));
     }
 
     /* ---------- v1.6.2：手机适配 ----------
@@ -405,32 +393,35 @@ function ok(cond, label, extra) {
       '主菜单显示联机网址（不用再去 PowerShell 里找）', net.text);
     ok(net.hasBtn && net.fits, '网址后面有复制按钮，且没被挤出视口');
 
-    /* ============ v1.5.1：规则弹层按版本分开显示 ============ */
-    console.log('\n[1b] 规则按版本分开显示（v1.5.1）');
+    /* ============ v1.7：规则弹层只讲经典版（小白向全覆盖） ============ */
+    console.log('\n[1b] 规则弹层（v1.7 重写：一套规则、从主菜单和对局打开看到的一样）');
     await evaluate(ws, `document.getElementById('btnRulesMenu').click()`);
     await waitFor(ws, `document.getElementById('rulesModal').classList.contains('show')`, 6000, '规则弹层弹出');
     await sleep(250);
     await screenshot(ws, 'v151-1-rules-menu.png');
 
-    const rBoth = await evaluate(ws, `window.__pw.rulesView()`);
-    const secTitles = rBoth.sections.map((s) => s.title);
-    const iGoal = secTitles.findIndex((t) => t.indexOf('目标') === 0);
-    const iChaosSec = secTitles.findIndex((t) => t.indexOf('魔改版') === 0);
-    ok(rBoth.scope === 'both', '从主菜单打开：两套规则一起看', rBoth.scope);
-    ok(rBoth.tag === '', '两套一起看时，标题不挂版本标记', '实际「' + rBoth.tag + '」');
-    ok(iGoal === 0 && iChaosSec === secTitles.length - 1 && iChaosSec > iGoal,
-      '经典规则全部排在前面，魔改版整节压在最后',
-      `「目标」@${iGoal} / 魔改 @${iChaosSec} / 共 ${secTitles.length} 节`);
-    ok(rBoth.sections.every((s) => s.shown), '两套一起看时所有小节都显示');
-    ok(rBoth.variants.length >= 6 && rBoth.variants.every((v) => v.shown),
-      '两套一起看时，每处版本差异都要显示',
-      rBoth.variants.map((v) => v.kind).join(','));
-    ok(rBoth.variants.some((v) => v.kind === 'classic') &&
-      rBoth.variants.some((v) => v.kind === 'chaos'),
-      '经典与魔改的差异都在（得分公式 / 7×7 / 可选块数 / 环上块数）');
-    ok(rBoth.chaosLegend, '魔改版专属的「混沌格」图例行也在');
+    const rMenu = await evaluate(ws, `window.__pw.rulesView()`);
+    const secTitles = rMenu.sections.map((s) => s.title);
+    ok(rMenu.open, '弹层处于打开状态');
+    ok(secTitles[0].indexOf('一分钟看懂') === 0,
+      '开篇就是「一分钟看懂」，小白先抓整体', secTitles[0]);
+    ok(secTitles[secTitles.length - 1].indexOf('怎么操作') === 0,
+      '压轴是「怎么操作」', secTitles[secTitles.length - 1]);
+    ok(rMenu.sections.every((s) => s.shown), '所有小节都显示（没有按版本藏起来的内容）');
+    ok(secTitles.some((t) => t.indexOf('回合顺序') === 0), '讲了回合顺序（最落后者行动）');
+    ok(secTitles.some((t) => t.indexOf('二选一') >= 0), '讲了每回合二选一');
+    ok(secTitles.some((t) => t.indexOf('时间板上的事件') === 0), '讲了时间板事件');
+    ok(secTitles.some((t) => t.indexOf('7×7 奖励') === 0), '讲了 7×7 奖励与结束');
+    ok(secTitles.filter((t) => t.indexOf('图例') === 0).length === 2, '两块图例（时间板 / 拼布板与补丁）');
+    ok(secTitles.some((t) => t.indexOf('补丁环') === 0), '讲了补丁环两种环绕方式');
+    // 全文不该再出现「魔改」字样（更新日志弹层除外，那里是历史记录）
+    const modalText = await evaluate(ws, `document.querySelector('#rulesModal .rules-body').textContent`);
+    ok(modalText.indexOf('魔改') < 0 && modalText.indexOf('混沌') < 0,
+      '规则全文没有「魔改 / 混沌」残留');
+    // v1.7 新增的「轨道数值签」图例要写进去
+    ok(modalText.indexOf('轨道数值签') >= 0, '图例里有 v1.7 新增的「轨道数值签」说明');
 
-    // 滚到最底看一眼：魔改版那一节确实压在全部经典规则之后
+    // 滚到最底确认内容真的渲染完整
     await evaluate(ws, `(function(){
       const card = document.querySelector('#rulesModal .overlay-card');
       const body = document.querySelector('#rulesModal .ov-body');
@@ -445,16 +436,13 @@ function ok(cond, label, extra) {
       const r = last.getBoundingClientRect();
       return {
         title: last.querySelector('h3').textContent,
-        dashed: getComputedStyle(last).borderTopStyle,
         bottom: Math.round(r.bottom), vh: window.innerHeight,
       };
     })()`);
-    ok(tailSec.title.indexOf('魔改版') === 0, '滚到底，最后一节就是魔改版', tailSec.title);
-    ok(tailSec.dashed === 'dashed', '魔改版那节上面缝了一道粗虚线，跟经典部分分开',
-      tailSec.dashed);
+    ok(tailSec.title.indexOf('怎么操作') === 0, '滚到底，最后一节就是怎么操作', tailSec.title);
     ok(tailSec.bottom <= tailSec.vh + 2, '整节内容真的能滚到底', `底 ${tailSec.bottom} / 视口 ${tailSec.vh}`);
 
-    // 进一局经典，再打开规则 → 只该看到经典那一套
+    // 进一局经典，再打开规则 → 主菜单和对局打开看到的内容一致（同一套、全量显示）
     await evaluate(ws, `document.getElementById('btnRulesClose').click()`);
     await sleep(200);
     await evaluate(ws, `document.getElementById('btnSolo').click()`);
@@ -466,18 +454,13 @@ function ok(cond, label, extra) {
     await sleep(250);
     await screenshot(ws, 'v151-2-rules-classic.png');
 
-    const rClassic = await evaluate(ws, `window.__pw.rulesView()`);
-    const classicChaosSec = rClassic.sections.find((s) => s.rules === 'chaos');
-    ok(rClassic.scope === 'classic', '对局里打开：按这一局的版本显示', rClassic.scope);
-    ok(rClassic.tag === '经典版', '标题右边挂上「经典版」', rClassic.tag);
-    ok(classicChaosSec && !classicChaosSec.shown,
-      '经典局里看不到「魔改版 · 混沌拼布」那一节',
-      classicChaosSec ? classicChaosSec.title : '找不到该节');
-    ok(rClassic.variants.filter((v) => v.kind === 'classic').every((v) => v.shown) &&
-      rClassic.variants.filter((v) => v.kind === 'chaos').every((v) => !v.shown),
-      '经典的数字留着、魔改的数字藏起来',
-      rClassic.variants.map((v) => v.kind + ':' + v.shown).join(' '));
-    ok(!rClassic.chaosLegend, '经典局里也没有「混沌格」图例');
+    const rGame = await evaluate(ws, `window.__pw.rulesView()`);
+    ok(rGame.sections.length === rMenu.sections.length &&
+      rGame.sections.every((s) => s.shown),
+      '对局里打开规则也是同一套、全量显示',
+      `对局 ${rGame.sections.length} 节 / 主菜单 ${rMenu.sections.length} 节`);
+    const gameText = await evaluate(ws, `document.querySelector('#rulesModal .rules-body').textContent`);
+    ok(gameText.indexOf('魔改') < 0, '对局里的规则全文同样没有「魔改」残留');
 
     await evaluate(ws, `document.getElementById('btnRulesClose').click()`);
     await sleep(150);
@@ -489,6 +472,211 @@ function ok(cond, label, extra) {
     })()`);
     await waitFor(ws, `document.getElementById('menu').classList.contains('active')`, 12000, '回到主菜单');
     await sleep(600);
+
+    /* ---------- v1.7：锦标赛 ---------- */
+    console.log('\n[1c] 锦标赛：入口 / 昵称 / 排行榜 / 详情 / 结算入库（v1.7）');
+    {
+      // 1. 入口打开弹层；没有记录时是空榜提示
+      await evaluate(ws, `document.getElementById('btnTourney').click()`);
+      await waitFor(ws, `document.getElementById('tourneyModal').classList.contains('show')`, 5000, '锦标赛弹层打开');
+      await sleep(200);
+      const tw0 = await evaluate(ws, `(function(){
+        return {
+          empty: !document.getElementById('twEmpty').hidden,
+          rows: document.querySelectorAll('#twList .tw-row').length,
+          errHidden: document.getElementById('twErr').hidden,
+        };
+      })()`);
+      ok(tw0.empty && tw0.rows === 0 && tw0.errHidden,
+        '空榜提示在位，错误提示默认藏着', JSON.stringify(tw0));
+
+      // 2. 昵称必填：清空后点「开始挑战」被拦下
+      //（openTourney 会拿玩家名预填昵称，这里先抹掉才能测到拦截分支）
+      await evaluate(ws, `document.getElementById('twName').value = ''`);
+      await evaluate(ws, `document.getElementById('btnTourneyGo').click()`);
+      await sleep(200);
+      const twErr = await evaluate(ws, `(function(){
+        return {
+          err: !document.getElementById('twErr').hidden,
+          open: document.getElementById('tourneyModal').classList.contains('show'),
+          pending: !!window.__pw.tourneyPending,
+        };
+      })()`);
+      ok(twErr.err && twErr.open && !twErr.pending,
+        '空昵称点开始挑战被拦下（红字提示、不进对局）', JSON.stringify(twErr));
+
+      // 3. 预置三条记录验证排序与统计（关掉再打开触发重渲染）
+      await evaluate(ws, `(function(){
+        const now = Date.now();
+        twAdd({ id: 'twT1', name: '阿布', at: now - 86400000, dur: 300000,
+          me: { buttons: 40, bonus: 7, penalty: 2, total: 45 },
+          bot: { buttons: 30, bonus: 0, penalty: 4, total: 26 },
+          diff: 19, win: true, actions: ['阿布 买下 C3 补丁', 'wzzzhhhhh 直奔 4 格'] });
+        twAdd({ id: 'twT2', name: '阿布', at: now - 43200000, dur: 420000,
+          me: { buttons: 21, bonus: 0, penalty: 8, total: 13 },
+          bot: { buttons: 38, bonus: 7, penalty: 1, total: 44 },
+          diff: -31, win: false, actions: [] });
+        twAdd({ id: 'twT3', name: '小圆', at: now - 3600000, dur: 260000,
+          me: { buttons: 33, bonus: 7, penalty: 3, total: 37 },
+          bot: { buttons: 31, bonus: 0, penalty: 2, total: 29 },
+          diff: 8, win: true, actions: ['小圆 跳过领纽扣'] });
+        return twLoad().length;
+      })()`);
+      await evaluate(ws, `document.getElementById('btnTourneyClose').click()`);
+      await sleep(100);
+      await evaluate(ws, `document.getElementById('btnTourney').click()`);
+      await sleep(200);
+      const tw1 = await evaluate(ws, `(function(){
+        const rows = Array.from(document.querySelectorAll('#twList .tw-row'));
+        return {
+          rows: rows.length,
+          order: rows.map((r) => ({
+            badge: r.querySelector('.tw-badge').textContent,
+            score: r.querySelector('.tw-score').textContent,
+          })),
+          stats: document.getElementById('twStats').textContent,
+          emptyHidden: document.getElementById('twEmpty').hidden,
+        };
+      })()`);
+      ok(tw1.rows === 3 && tw1.emptyHidden, '预置 3 条记录后榜单渲染 3 行、空榜提示藏起',
+        JSON.stringify(tw1.order));
+      ok(tw1.order.map((r) => r.badge).join(',') === '+19,+8,-31',
+        '按净分从高到低排序（+19 → +8 → −31）', tw1.order.map((r) => r.badge).join(','));
+      ok(tw1.stats.indexOf('+19') >= 0 && tw1.stats.indexOf('67%') >= 0,
+        '统计头显示最佳净分 +19 与胜率 67%（2/3 场）', tw1.stats);
+
+      // 4. 行点击展开/收起详情：得分构成 + 行动流水
+      const tw2 = await evaluate(ws, `(function(){
+        const row = document.querySelectorAll('#twList .tw-row')[0];
+        const d = row.querySelector('.tw-detail');
+        row.click();
+        const shown = d && !d.hidden;
+        const acts = d ? d.querySelectorAll('.tw-actions > div').length : 0;
+        const tds = d ? d.querySelectorAll('.score-table tbody tr').length : 0;
+        row.click();
+        const hiddenAgain = d.hidden;
+        return { shown, acts, tds, hiddenAgain };
+      })()`);
+      ok(tw2.shown && tw2.tds === 2 && tw2.acts === 2,
+        '点记录行展开详情：双方得分构成 + 行动流水', JSON.stringify(tw2));
+      ok(tw2.hiddenAgain, '再点一下详情收起');
+
+      // 5. 清空走两段确认（不用 confirm 弹窗，无头环境友好）
+      await evaluate(ws, `document.getElementById('btnTourneyClear').click()`);
+      await sleep(100);
+      const tw3a = await evaluate(ws, `(function(){
+        return {
+          label: document.getElementById('btnTourneyClear').textContent,
+          kept: twLoad().length,
+        };
+      })()`);
+      ok(tw3a.label === '再点一下确认清空' && tw3a.kept === 3,
+        '清空按钮第一下只亮确认文案，记录还在', JSON.stringify(tw3a));
+      await evaluate(ws, `document.getElementById('btnTourneyClear').click()`);
+      await sleep(100);
+      const tw3b = await evaluate(ws, `(function(){
+        return {
+          label: document.getElementById('btnTourneyClear').textContent,
+          left: twLoad().length,
+          empty: !document.getElementById('twEmpty').hidden,
+        };
+      })()`);
+      ok(tw3b.left === 0 && tw3b.empty && tw3b.label === '清空记录',
+        '再点一下真的清空，空榜提示回来', JSON.stringify(tw3b));
+
+      // 6. 真实链路：填昵称 → 开始挑战 → 困难档人机局 + 载荷武装 + 行动采集
+      await evaluate(ws, `document.getElementById('twName').value = '测试选手'`);
+      await evaluate(ws, `document.getElementById('btnTourneyGo').click()`);
+      await waitFor(ws, `document.getElementById('game').classList.contains('active')`, 8000, '锦标赛进入对局');
+      await waitFor(ws, `document.getElementById('modeTag').textContent.indexOf('人机') >= 0`, 5000, '锦标赛模式标签');
+      await sleep(1500); // 让电脑走两步，行动流水里就有内容
+      const tw4 = await evaluate(ws, `(function(){
+        const lvEl = document.querySelector('#playersWrap .pc-level');
+        return {
+          armed: !!window.__pw.tourney,
+          name: window.__pw.tourney ? window.__pw.tourney.name : '',
+          pendingGone: !window.__pw.tourneyPending,
+          level: lvEl ? (lvEl.dataset.level || '') : '',
+          acts: window.__pw.tourney ? window.__pw.tourney.actions.length : 0,
+          savedName: localStorage.getItem('pwTourneyName') || '',
+          playerName: document.getElementById('playerName').value,
+        };
+      })()`);
+      ok(tw4.armed && tw4.name === '测试选手' && tw4.pendingGone,
+        '开始挑战后记录载荷武装上（pending 已消费）', JSON.stringify({ name: tw4.name }));
+      ok(tw4.level === 'hard', '锦标赛固定困难档（data-level=hard）', tw4.level);
+      ok(tw4.acts > 0, '行动流水开始采集（日志文本进了载荷）', tw4.acts + ' 条');
+      ok(tw4.savedName === '测试选手' && tw4.playerName === '测试选手',
+        '参赛昵称记忆到 localStorage 并带进建房参数', tw4.savedName);
+
+      // 7. 伪造结算入库：真实 state + 按当前席位构造的 result 调 showResult，
+      //    验证「净分/得分构成/行动流水 → localStorage」全链路（我 13 vs bot 43）
+      await evaluate(ws, `(function(){
+        const mySeat = window.__pw.seat;
+        const scores = [];
+        scores[mySeat] = { buttons: 21, bonus: 0, penalty: 8, total: 13 };
+        scores[1 - mySeat] = { buttons: 40, bonus: 7, penalty: 4, total: 43 };
+        showResult({ winner: 1 - mySeat, ranking: [mySeat, 1 - mySeat], scores: scores });
+        return 'ok';
+      })()`);
+      await sleep(300);
+      const tw5 = await evaluate(ws, `(function(){
+        const list = twLoad();
+        const rec = list[list.length - 1] || null;
+        return {
+          n: list.length,
+          cleared: !window.__pw.tourney,
+          rec: rec ? {
+            name: rec.name, diff: rec.diff, win: rec.win,
+            meTotal: rec.me.total, botTotal: rec.bot.total,
+            acts: (rec.actions || []).length,
+          } : null,
+          ovShown: document.getElementById('overlay').classList.contains('show'),
+        };
+      })()`);
+      ok(tw5.rec && tw5.rec.name === '测试选手' && tw5.rec.diff === -30 && tw5.rec.win === false &&
+        tw5.rec.meTotal === 13 && tw5.rec.botTotal === 43,
+        '结算入库：净分 = 我 13 − wzzzhhhhh 43 = −30，输局如实记录', JSON.stringify(tw5.rec));
+      ok(tw5.rec && tw5.rec.acts > 0, '入库记录带着本局的行动流水',
+        tw5.rec ? tw5.rec.acts + ' 条' : '');
+      ok(tw5.cleared, '结算后载荷清空，「再来一局」的新局不再采集');
+      ok(tw5.ovShown, '伪造结算同时弹出了正常结算面板');
+
+      // 8. 回主菜单看榜：记录与详情都来自刚才的真实链路
+      await evaluate(ws, `document.getElementById('btnClose').click()`);
+      await sleep(150);
+      await evaluate(ws, `(function(){
+        window.confirm = function(){ return true; };
+        document.getElementById('btnBack').click();
+        return 'ok';
+      })()`);
+      await waitFor(ws, `document.getElementById('menu').classList.contains('active')`, 12000, '回到主菜单');
+      await sleep(400);
+      await evaluate(ws, `document.getElementById('btnTourney').click()`);
+      await sleep(200);
+      const tw6 = await evaluate(ws, `(function(){
+        const rows = document.querySelectorAll('#twList .tw-row');
+        const row = rows[0];
+        let detailActs = -1;
+        if (row) {
+          const d = row.querySelector('.tw-detail');
+          row.click();
+          detailActs = d ? d.querySelectorAll('.tw-actions > div').length : -1;
+        }
+        return {
+          rows: rows.length,
+          badge: row ? row.querySelector('.tw-badge').textContent : '',
+          detailActs,
+        };
+      })()`);
+      ok(tw6.rows === 1 && tw6.badge === '-30',
+        '回主菜单重开弹层：刚才那局已经上榜（−30）', JSON.stringify({ rows: tw6.rows, badge: tw6.badge }));
+      ok(tw6.detailActs > 0, '详情里的行动流水来自真实对局日志', tw6.detailActs + ' 条');
+      await evaluate(ws, `document.getElementById('btnTourneyClose').click()`);
+      await sleep(100);
+      // 清掉测试数据，给 [2] 一个干净现场
+      await evaluate(ws, `twSave([]); localStorage.removeItem('pwTourneyName');`);
+    }
 
     console.log('\n[2] 人机对战');
     // v1.6.7：先选「困难」，好顺带验证名字旁的难度徽章
@@ -780,7 +968,7 @@ function ok(cond, label, extra) {
       '补丁搬回环上，正面前 3 块又交回给大卡片',
       `chips=${back.chips} N=${back.N}`);
 
-    // 这一节验完了，把偏好切回默认档 —— 后面的用例（跳过高亮、日志、魔改局）
+    // 这一节验完了，把偏好切回默认档 —— 后面的用例（跳过高亮、日志）
     // 都按「双人默认绕拼布板」这个前提走，别被这里的临时切换带偏。
     await evaluate(ws, `document.querySelector('#layoutSwitch button[data-layout="frame"]').click()`);
     await sleep(500);
@@ -888,9 +1076,9 @@ function ok(cond, label, extra) {
     })()`);
     ok(cl.show, '更新日志弹层能打开');
     ok(cl.vers >= 3, '包含 3 个及以上版本', '实际 ' + cl.vers);
-    ok(cl.first.indexOf('v1.6.7') === 0, '首条是 v1.6.7', cl.first);
-    ok(cl.items >= 4, 'v1.6.7 条目不少于 4 条（加强困难人机 + 难度徽章）', '实际 ' + cl.items);
-    ok(cl.versions.slice(0, 11).join(',') === 'v1.6.7,v1.6.6,v1.6.5,v1.6.4,v1.6.3,v1.6.2,v1.6.1,v1.6,v1.5.1,v1.5,v1.4.1',
+    ok(cl.first.indexOf('v1.7') === 0, '首条是 v1.7', cl.first);
+    ok(cl.items >= 4, 'v1.7 条目不少于 4 条（数值签 + 锦标赛 + 下架魔改 + 规则重写）', '实际 ' + cl.items);
+    ok(cl.versions.slice(0, 12).join(',') === 'v1.7,v1.6.7,v1.6.6,v1.6.5,v1.6.4,v1.6.3,v1.6.2,v1.6.1,v1.6,v1.5.1,v1.5,v1.4.1',
       '版本号是连续的（含补记的 1.1）', cl.versions.join(' / '));
     await screenshot(ws, 'v165-4-changelog.png');
 
@@ -939,7 +1127,7 @@ function ok(cond, label, extra) {
     ok(sfx3.on === true && sfx3.stored === '1' && sfx3.off.every((v) => v === false),
       '用主菜单那个开关也能打开，两处仍然同步');
 
-    console.log('\n[4c] 魔改版 · 混沌拼布（v1.5 的主角）');
+    console.log('\n[4c] 魔改版入口已下架（v1.7）');
     // 「返回主菜单」会整页重载，重载前先把 confirm 放行，否则对局中离开会被拦下
     await evaluate(ws, `(function(){
       window.confirm = function(){ return true; };
@@ -948,102 +1136,19 @@ function ok(cond, label, extra) {
     })()`);
     await waitFor(ws, `document.getElementById('menu').classList.contains('active')`, 12000, '回到主菜单');
     await sleep(700);
-    const chaosMenu = await evaluate(ws, `(function(){
-      const b = document.querySelector('.mode-card.chaos[data-mode="solo"][data-variant="chaos"]');
-      const hint = document.querySelector('[data-chaos-hint]');
-      const grid = document.querySelector('.menu-grid');
-      const gs = getComputedStyle(grid);
+    const gone = await evaluate(ws, `(function(){
       return {
-        hasButton: !!b,
-        buttonText: b ? b.querySelector('b').textContent : '',
-        hint: hint ? hint.textContent : '',
         chaosCards: document.querySelectorAll('.mode-card.chaos').length,
-        gridCols: gs.gridTemplateColumns.split(' ').length,
-        colW: Math.round(grid.getBoundingClientRect().width),
+        chaosHint: document.querySelectorAll('[data-chaos-hint]').length,
         sfxOn: window.__pw.sfxOn,
-      storedSfx: localStorage.getItem('pwSfx'),
+        storedSfx: localStorage.getItem('pwSfx'),
       };
     })()`);
-    ok(chaosMenu.hasButton, '主菜单上有魔改版的人机入口', chaosMenu.buttonText);
-    ok(chaosMenu.chaosCards === 3, '魔改版在单机与联机两栏里都摆了入口',
-      '魔改入口 ' + chaosMenu.chaosCards + ' 个');
-    ok(chaosMenu.gridCols === 2, '单机与联机确实左右并排', chaosMenu.gridCols + ' 列');
-    ok(/\d 纽扣起步/.test(chaosMenu.hint),
-      '魔改版的说明是照服务端数值生成的，不是写死的', chaosMenu.hint);
-    ok(chaosMenu.sfxOn === true && chaosMenu.storedSfx === '1',
-      '整页重载后音效设置照旧生效（跟着本地存储走）', chaosMenu.storedSfx);
+    ok(gone.chaosCards === 0, '整页重载后主菜单依然没有魔改版入口', '实际 ' + gone.chaosCards);
+    ok(gone.chaosHint === 0, '魔改版的小字说明也一起下架了', '实际 ' + gone.chaosHint);
+    ok(gone.sfxOn === true && gone.storedSfx === '1',
+      '整页重载后音效设置照旧生效（跟着本地存储走）', gone.storedSfx);
     await screenshot(ws, 'v15-1-menu.png');
-
-    await evaluate(ws, `document.querySelector('.mode-card.chaos[data-mode="solo"][data-variant="chaos"]').click()`);
-    await waitFor(ws, `document.getElementById('game').classList.contains('active')`, 8000, '进入魔改对局');
-    await waitFor(ws, `document.querySelectorAll('#playersWrap .player-card').length === 2`, 8000, '两张玩家卡');
-    await sleep(1800);
-    const chaos = await evaluate(ws, `(function(){
-      const st = window.__pw.state;
-      const tb = document.getElementById('timeboard');
-      const kids = Array.from(tb.children);
-      const chaosCells = kids.filter((c) => c.classList.contains('chaos'));
-      const front = document.getElementById('ringFront');
-      const far = document.getElementById('ringFar');
-      return {
-        variant: window.__pw.variant,
-        modeTag: document.getElementById('modeTag').textContent,
-        modeTagChaos: document.getElementById('modeTag').classList.contains('chaos'),
-        rules: window.__pw.rules,
-        visible: st.visible.length,
-        N: st.circle.length,
-        chaosCells: chaosCells.length,
-        chaosIdx: chaosCells.map((c) => kids.indexOf(c)).join(','),
-        frontCards: front.children.length,
-        frontCols: getComputedStyle(front).gridTemplateColumns.split(' ').length,
-        layout: window.__pw.layout,
-        chipCount: far.children.length,
-        boxChaos: !!document.getElementById('boardWrap').dataset.variant &&
-          document.getElementById('boardWrap').dataset.variant === 'chaos',
-      };
-    })()`);
-    ok(chaos.variant === 'chaos', '这一局确实是魔改版', chaos.variant);
-    ok(chaos.modeTag.indexOf('魔改') >= 0 && chaos.modeTagChaos,
-      '顶栏模式标签挂上了「魔改」', chaos.modeTag);
-    ok(chaos.rules && chaos.rules.startButtons === 0, '魔改版开局 0 纽扣',
-      JSON.stringify(chaos.rules && chaos.rules.startButtons));
-    ok(chaos.rules.bonusBonus === 14 && chaos.rules.emptyPenalty === 3,
-      '7×7 奖励 ×2、空格罚分 +1 这些数值也随变体变',
-      `bonus=${chaos.rules.bonusBonus} penalty=${chaos.rules.emptyPenalty}`);
-    ok(chaos.visible === 4 && chaos.frontCards === 4 && chaos.frontCols === 4,
-      '前方能看到 4 块，下方也排成 4 张卡片',
-      `visible=${chaos.visible} cards=${chaos.frontCards} cols=${chaos.frontCols}`);
-    ok(chaos.N === 26, '补丁环只抽了 26 块', chaos.N + ' 块');
-    // 绕拼布板时框上把每一块都画出来；圆环时正面那几块交给下方卡片，环上不重复画。
-    // 魔改版正面是 4 块，但环上只跳过前 3 个名次，所以环上剩 N − 3。
-    const expectChips = chaos.layout === 'frame' ? chaos.N : chaos.N - 3;
-    ok(chaos.layout === 'frame', '双人局默认仍是「绕拼布板」', chaos.layout);
-    ok(chaos.chipCount === expectChips,
-      '框上／环上的补丁数与布局规则吻合', `${chaos.chipCount} vs ${expectChips}`);
-    ok(chaos.chaosCells === 3 && chaos.chaosIdx === '12,30,48',
-      '时间板上多出 3 个混沌格，落在第 12 / 30 / 48 格', chaos.chaosIdx);
-    ok(chaos.boxChaos, '对局区也标了变体，方便样式区分');
-    await screenshot(ws, 'v15-4-chaos.png');
-
-    // v1.5.1：魔改局里打开规则，只该看到魔改那一套
-    console.log('\n[4c2] 魔改局里的规则只显示魔改那套');
-    await evaluate(ws, `document.getElementById('btnRules').click()`);
-    await waitFor(ws, `document.getElementById('rulesModal').classList.contains('show')`, 6000, '魔改局里弹出规则');
-    await sleep(250);
-    await screenshot(ws, 'v151-3-rules-chaos.png');
-    const rChaos = await evaluate(ws, `window.__pw.rulesView()`);
-    const chaosSec = rChaos.sections.find((s) => s.rules === 'chaos');
-    ok(rChaos.scope === 'chaos', '在魔改局里打开：scope 是魔改', rChaos.scope);
-    ok(rChaos.tag === '魔改版', '标题右边挂上「魔改版」', rChaos.tag);
-    ok(chaosSec && chaosSec.shown, '「魔改版 · 混沌拼布」那一节看得见',
-      chaosSec ? chaosSec.title : '找不到该节');
-    ok(rChaos.variants.filter((v) => v.kind === 'chaos').every((v) => v.shown) &&
-      rChaos.variants.filter((v) => v.kind === 'classic').every((v) => !v.shown),
-      '魔改的数字留着、经典的数字藏起来',
-      rChaos.variants.map((v) => v.kind + ':' + v.shown).join(' '));
-    ok(rChaos.chaosLegend, '魔改局里「混沌格」图例看得见');
-    await evaluate(ws, `document.getElementById('btnRulesClose').click()`);
-    await sleep(150);
 
     /* ================= B：联机部分 ================= */
     const wsb = edgeB.ws;

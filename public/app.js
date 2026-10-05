@@ -160,6 +160,10 @@ const S = {
   layout: 'frame',
   // 本局的规则变体（'classic' | 'chaos'），由服务端在 state 里带过来
   variant: 'classic',
+  // 锦标赛进行中的记录载荷（v1.7）：{ name, startedAt, actions[] }。
+  // 只在从锦标赛入口点「开始挑战」后由 maybeTourneyArm 武装，
+  // 结算写入榜单即清空 —— 「再来一局」开出的新局不会混进排行榜。
+  tourney: null,
 };
 
 /* ---------------- 三块屏幕 ---------------- */
@@ -264,6 +268,7 @@ function setMenuMsg(text, ok) {
 /* ---------------- 服务端消息 ---------------- */
 function handleServerMessage(msg) {
   maybeCountGame(msg);
+  maybeTourneyArm(msg);
   if (msg.type === 'joined') {
     S.room = msg.room;
     S.seat = msg.seat;
@@ -275,6 +280,7 @@ function handleServerMessage(msg) {
     S.votedRematch = false;
     S.lastEventKey = null;
     S.cursors = {};
+    S.tourney = null; // 进新房间先清掉上一局可能残留的锦标赛载荷
     try { localStorage.setItem('pwSeat', JSON.stringify({ room: msg.room, token: msg.token })); } catch (e) { /* 忽略 */ }
     $('log').innerHTML = '';
     $('roomTag').textContent = '房间 ' + msg.room;
@@ -836,6 +842,27 @@ function placeChips(host, ctx, layout, alive) {
   const frontIds = new Set(visible);
   const me = S.state.players[actSeat()];
   const canPlayNow = canAct() && !S.leatherMode;
+  /* v1.7：轨道数值签。1.0 起轨道上的补丁只有悬停才能看到价格 —— 现在每块
+     补丁脚边常挂一枚「纽扣 · 时间 · 增益」小签，字号固定不随远近缩放。
+     只在绕拼布板（桌面默认）挂：环绕时间板（窄屏）时正面 3 块本来就不上环，
+     价格由下方大卡片承担，圆环上再挤 33 枚小签反而看不清。 */
+  const useFrame = !ctx.skipFront;
+  const farStyle = getComputedStyle(host);
+  const tile = parseFloat(farStyle.getPropertyValue('--rc-tile')) || 7;
+  const gap = parseFloat(farStyle.getPropertyValue('--rc-gap')) || 1;
+  const stageW = host.clientWidth || 0;   // 数值签的横向夹取 / 竖排切换都用它
+
+  /** 数值签：有就复用，没有就建（和 chip 同生命周期，随补丁退场一起删） */
+  const tagFor = (pid) => {
+    let tag = host.querySelector(`.rc-tag[data-patch-id="${pid}"]`);
+    if (!tag) {
+      tag = document.createElement('div');
+      tag.className = 'rc-tag';
+      tag.dataset.patchId = pid;
+      host.appendChild(tag);
+    }
+    return tag;
+  };
 
   for (let i = 0; i < N; i += 1) {
     const pid = circle[i];
@@ -873,6 +900,46 @@ function placeChips(host, ctx, layout, alive) {
     chip.classList.toggle('selectable', clickable);
     chip.classList.toggle('picked', Boolean(S.selected && S.selected.patchId === pid));
     chip.onclick = clickable ? () => pickPatch(pid) : null;
+
+    // ---- v1.7 数值签：轨道上直接读「花多少 · 走多远 · 赚多少」 ----
+    // （正面 3 块在环绕布局下根本不上环，所以这里想挂也轮不到它们）
+    if (!useFrame) {
+      // 从桌面宽屏切回窄屏时，把上一布局留下的旧签摘掉，别让它们悬在环上
+      const stale = host.querySelector(`.rc-tag[data-patch-id="${pid}"]`);
+      if (stale) stale.remove();
+      continue;
+    }
+    const tag = tagFor(pid);
+    tag.innerHTML = `<span class="c">${patch.cost}</span><span class="t">${patch.time}</span>` +
+      `<span class="i">${patch.income > 0 ? '+' + patch.income : '±0'}</span>`;
+    tag.title = `${patch.id.toUpperCase()} 号补丁 · 消耗 ${patch.cost} 纽扣 · 时间 +${patch.time} 格` +
+      ` · 增益 每轮 +${patch.income} 纽扣`;
+    // 窄舞台（手机竖屏/窄窗口）切竖排签：轨道上相邻补丁的间距只有 ~27px，
+    // 横排签 48px+ 宽必会互相叠压；竖排三行只有 ~22px 宽，刚好放得下。
+    const stack = stageW > 0 && stageW < 660;
+    tag.classList.toggle('stack', stack);
+    // 签贴在 chip 外沿：舞台上半的放上面、下半的放下面，避开补丁本体
+    const o = patch.orientations[0];
+    const chipW = (o.cols * tile + (o.cols - 1) * gap + 4) * p.s;
+    const chipH = (o.rows * tile + (o.rows - 1) * gap + 4) * p.s;
+    const tagW = tag.offsetWidth;
+    const tagH = tag.offsetHeight;
+    let tx;
+    let ty;
+    if (stack && Math.abs(p.y) <= 70) {
+      // 左右两列：竖排签贴到补丁内侧的空当（外侧就是屏幕边），垂直对齐补丁
+      tx = p.x + (chipW / 2 + tagW / 2 + 3) * (p.x < 0 ? 1 : -1);
+      ty = p.y;
+    } else {
+      const above = p.y < 0;                     // 舞台上半 → 签朝外（上）
+      ty = p.y + (chipH / 2 + tagH / 2 + 2) * (above ? -1 : 1);
+      // 横向夹回舞台内 —— 左右两列的签最容易被屏幕边裁掉半截。
+      // 注意 p.x 是相对舞台中心的坐标（left:50% 起算），范围换算成 ±(半宽-半签)。
+      const room = stageW / 2 - (tagW / 2 + 4);
+      tx = room > 0 ? Math.min(Math.max(p.x, -room), room) : p.x;
+    }
+    tag.style.transform =
+      `translate(calc(-50% + ${tx.toFixed(1)}px), calc(-50% + ${ty.toFixed(1)}px))`;
   }
 }
 
@@ -1499,6 +1566,12 @@ function showResult(result) {
   const btn = $('btnRematch');
   btn.disabled = Boolean(S.votedRematch);
   btn.textContent = S.votedRematch ? '已提交' : '再来一局';
+
+  // 锦标赛对局结算：把时间/得分构成/行动流水写进排行榜（v1.7）。
+  // twRecord 成功或失败都会清掉 S.tourney，「再来一局」的新局不再采集。
+  if (S.tourney) {
+    try { twRecord(result, st); } catch (e) { S.tourney = null; }
+  }
 }
 
 /* ---------------- 交互 ---------------- */
@@ -1713,6 +1786,12 @@ function setLogJump(show) {
  * 改成亮一个「有新动态」按钮，点一下回到最新。
  */
 function pushLog(html) {
+  // 锦标赛对局在采集行动流水（v1.7）：把 HTML 剥成纯文本存档，
+  // 上限 TW.ACTION_CAP 条，超了就丢弃（榜单的价值主要在前半局）。
+  if (S.tourney && S.tourney.actions.length < TW.ACTION_CAP) {
+    const txt = String(html).replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+    if (txt) S.tourney.actions.push(txt);
+  }
   const el = $('log');
   const stick = logAtBottom(); // 必须在插入前判断，插完高度就变了
   const d = document.createElement('div');
@@ -1749,8 +1828,18 @@ function escapeHtml(s) {
 /* ---------------- 更新日志 ---------------- */
 const CHANGELOG = [
   {
-    v: 'v1.6.7',
+    v: 'v1.7',
     date: '当前',
+    items: [
+      '<b>补丁环上的每个补丁都能看到价格了</b>：圈上（和框上）每个可选补丁旁边都挂了一枚小签 —— <b>金色是纽扣、蓝色是时间、绿色是每局收入</b>，一眼比价不用点开猜。这个洞从 v1.0 一直留到现在，终于补上了。手机上签会自动换成竖排小签，不挤不挡。',
+      '<b>锦标赛来了</b>：主菜单多了一张「<b>锦标赛 · 挑战困难</b>」卡。交个参赛昵称，固定打困难档 wzzzhhhhh；每一局的对战时间、行动流水和双方得分构成都会记下来，按「<b>你的总分 − wzzzhhhhh 总分</b>」从高到低上榜，点记录行就能回看整局。记录存在自己设备上（最多 100 场），随时可清。',
+      '<b>「魔改版」正式下架</b>：主菜单和规则页里的魔改/混沌入口全部摘掉，从这一版起只有一个经典版。老房主若还开着混沌房，进房后会照常渲染，但新房间再也开不出魔改了。',
+      '<b>规则说明整个重写</b>：从「一分钟看懂」开始讲 —— 这是个什么比赛、钱和步数怎么权衡、怎么赢，再到落点预览、数值签图例、三种玩法和每一步操作，小白不查任何资料也能看懂开打。',
+    ],
+  },
+  {
+    v: 'v1.6.7',
+    date: '上一版',
     items: [
       '<b>困难人机又变强了一截</b>：上一版是「我一手 → 对手最凶一手」，这一版改成<b>能看六层</b>的递归搜索（我 → 对手 → 我 → 对手 → 我 → 对手），并且用 <b>Alpha-Beta 剪枝</b>把深搜压进每步 0.5 秒的时间预算里 —— 看得深得多，也不至于卡。',
       '<b>它现在会算「未来」</b>：给局面定价时，不再拿「空格 × 罚分」粗估，而是扣掉<b>那些注定填不上的孤立小洞</b>，还会算 7×7 奖励的「临门一脚」—— 差几格就能拼满时它会拼命去抢。',
@@ -1929,6 +2018,224 @@ function renderChangelog() {
 }
 
 /* ---------------- 菜单事件 ---------------- */
+
+/* ---------------- 锦标赛（v1.7） ----------------
+ * 固定困难档单挑 wzzzhhhhh，按「玩家总分 − wzzzhhhhh 总分」排名。
+ * 记录存 localStorage（pwTourneyV1）：对战时间、行动流水、双方得分构成。
+ * 只有从锦标赛入口点「开始挑战」的那一局才入库：
+ *   TW.pending 只在点击时挂上，第一个 solo playing 状态武装成 S.tourney；
+ *   结算写入榜单即清空 —— 「再来一局」开出的新局不会混进排行榜。 */
+const TW = {
+  KEY: 'pwTourneyV1',
+  NAME_KEY: 'pwTourneyName',
+  CAP: 100,        // 榜单最多留 100 条，防 localStorage 被行动流水撑爆
+  ACTION_CAP: 200, // 单局最多记 200 条行动
+  pending: null,
+};
+
+function twLoad() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(TW.KEY) || '[]');
+    return Array.isArray(arr) ? arr : [];
+  } catch (e) { return []; }
+}
+
+/** 行动流水占地方：存不下就先截半重试，再不行只留比分，最后默默放弃。 */
+function twSave(list) {
+  try { localStorage.setItem(TW.KEY, JSON.stringify(list)); return; } catch (e) { /* 继续 */ }
+  try {
+    localStorage.setItem(TW.KEY, JSON.stringify(
+      list.map((r) => Object.assign({}, r, {
+        actions: (r.actions || []).slice(0, Math.ceil((r.actions || []).length / 2)),
+      }))
+    ));
+    return;
+  } catch (e) { /* 继续 */ }
+  try {
+    localStorage.setItem(TW.KEY, JSON.stringify(list.map((r) => Object.assign({}, r, { actions: [] }))));
+  } catch (e) { /* 真放不下了，放弃本次保存 */ }
+}
+
+function twAdd(rec) {
+  const list = twLoad();
+  list.push(rec);
+  while (list.length > TW.CAP) list.shift();
+  twSave(list);
+}
+
+function twFmtTime(ts) {
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function twFmtDur(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  const m = Math.floor(s / 60);
+  return m > 0 ? `${m} 分 ${s % 60} 秒` : `${s} 秒`;
+}
+
+function twDiffBadge(diff) {
+  const cls = diff > 0 ? 'win' : (diff < 0 ? 'lose' : 'even');
+  const txt = diff > 0 ? `+${diff}` : String(diff);
+  return `<span class="tw-badge ${cls}">${txt}</span>`;
+}
+
+/** 渲染排行榜：按净分（我 − wzzzhhhhh）从高到低；点行展开对战详情。 */
+function renderTourney() {
+  const list = twLoad().sort((a, b) => (b.diff - a.diff) || (b.at - a.at));
+  const stats = $('twStats');
+  const empty = $('twEmpty');
+  if (!list.length) {
+    stats.textContent = '';
+    empty.hidden = false;
+  } else {
+    const best = list[0].diff;
+    const wins = list.filter((r) => r.diff > 0).length;
+    const rate = Math.round((wins * 100) / list.length);
+    stats.innerHTML = `共 <b>${list.length}</b> 场 · 最佳净分 <b>${best > 0 ? '+' + best : best}</b> · 胜 ${wins} 场（胜率 ${rate}%）`;
+    empty.hidden = true;
+  }
+  const box = $('twList');
+  box.innerHTML = list.map((rec, i) => {
+    const me = rec.me || {};
+    const bot = rec.bot || {};
+    const act = rec.actions || [];
+    const detail = `
+      <div class="tw-detail" hidden>
+        <div class="tw-drow"><span>对战时间</span><b>${twFmtTime(rec.at)} · 用时 ${twFmtDur(rec.dur || 0)}</b></div>
+        <table class="score-table">
+          <thead><tr><th></th><th>玩家</th><th>纽扣</th><th>7×7</th><th>空格</th><th>总分</th></tr></thead>
+          <tbody>
+            <tr class="first"><td class="rk">我</td><td class="nm">${escapeHtml(rec.name)}</td><td>${me.buttons}</td><td>${me.bonus}</td><td>−${me.penalty}</td><td class="tt">${me.total}</td></tr>
+            <tr><td class="rk">对手</td><td class="nm">wzzzhhhhh</td><td>${bot.buttons}</td><td>${bot.bonus}</td><td>−${bot.penalty}</td><td class="tt">${bot.total}</td></tr>
+          </tbody>
+        </table>
+        <div class="tw-actions-label">对战行动（${act.length} 条）</div>
+        <div class="tw-actions">${act.length
+          ? act.map((a) => `<div>${escapeHtml(a)}</div>`).join('')
+          : '<div class="tw-muted">（本局行动没有记录下来）</div>'}</div>
+      </div>`;
+    return `
+      <div class="tw-row" data-tw-id="${escapeHtml(rec.id || String(i))}">
+        <span class="tw-rank">${i + 1}</span>
+        <span class="tw-name">${escapeHtml(rec.name)}</span>
+        ${twDiffBadge(rec.diff)}
+        <span class="tw-score">${me.total} : ${bot.total}</span>
+        <span class="tw-date">${twFmtTime(rec.at)}</span>
+        ${detail}
+      </div>`;
+  }).join('');
+  Array.from(box.querySelectorAll('.tw-row')).forEach((row) => {
+    row.onclick = () => {
+      const d = row.querySelector('.tw-detail');
+      if (d) d.hidden = !d.hidden;
+    };
+  });
+}
+
+function openTourney() {
+  let saved = '';
+  try { saved = localStorage.getItem(TW.NAME_KEY) || ''; } catch (e) { /* 忽略 */ }
+  $('twName').value = saved || ($('playerName').value || '').trim();
+  $('twErr').hidden = true;
+  $('btnTourneyClear').textContent = '清空记录';
+  renderTourney();
+  $('tourneyModal').classList.add('show');
+  setMenuMsg('');
+}
+
+/** 点「开始挑战」：昵称必填；过关后把昵称带进建房参数，等首个 solo 状态武装记录。 */
+function twStartChallenge() {
+  const name = ($('twName').value || '').trim();
+  if (!name) {
+    $('twErr').hidden = false;
+    $('twName').focus();
+    return;
+  }
+  try { localStorage.setItem(TW.NAME_KEY, name); } catch (e) { /* 忽略 */ }
+  $('playerName').value = name; // 服务端建房直接用参赛昵称
+  rememberName(name);
+  TW.pending = { name, startedAt: Date.now(), actions: [] };
+  $('tourneyModal').classList.remove('show');
+  setMenuMsg('');
+  SFX.play('click');
+  createRoom({ mode: 'solo', variant: 'classic', level: 'hard' });
+}
+
+/** 第一个 solo playing 状态到达时，把 pending 装载成 S.tourney 开始采集。 */
+function maybeTourneyArm(msg) {
+  if (!TW.pending || !msg || msg.type !== 'state' || msg.phase !== 'playing') return;
+  if (msg.mode && msg.mode !== 'solo') return;
+  S.tourney = {
+    name: TW.pending.name,
+    startedAt: TW.pending.startedAt,
+    actions: TW.pending.actions || [],
+  };
+  TW.pending = null;
+}
+
+/** 结算入库：从 result/st 里认出我和 bot 两个席位，记下时间与得分构成。 */
+function twRecord(result, st) {
+  const t = S.tourney;
+  if (!t || !st || !st.players || !result || !result.scores) return;
+  let mySeat = -1;
+  let botSeat = -1;
+  st.players.forEach((p, seat) => {
+    if (!p) return;
+    if (p.bot) botSeat = seat;
+    else mySeat = seat;
+  });
+  if (mySeat < 0 || botSeat < 0) return; // 结构不对（联机/同机）不记
+  const me = result.scores[mySeat];
+  const bot = result.scores[botSeat];
+  if (!me || !bot) return;
+  twAdd({
+    id: `tw${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+    name: t.name,
+    at: Date.now(),
+    dur: Math.max(0, Date.now() - t.startedAt),
+    me: { buttons: me.buttons, bonus: me.bonus, penalty: me.penalty, total: me.total },
+    bot: { buttons: bot.buttons, bonus: bot.bonus, penalty: bot.penalty, total: bot.total },
+    diff: (me.total || 0) - (bot.total || 0),
+    win: result.winner === mySeat,
+    actions: (t.actions || []).slice(0, TW.ACTION_CAP),
+  });
+  S.tourney = null;
+}
+
+/* 清空按钮走两段确认（点一下变「再点一下确认」，3 秒没动静自动复原），
+ * 不用 confirm() 弹窗 —— 无头测试里会卡死，手机上也多一步操作。 */
+let twClearArm = 0;
+let twClearTimer = 0;
+
+$('btnTourney').onclick = () => { SFX.play('click'); openTourney(); };
+$('btnTourneyClose').onclick = () => { $('tourneyModal').classList.remove('show'); };
+$('btnTourneyGo').onclick = twStartChallenge;
+$('twName').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') twStartChallenge();
+});
+$('twName').addEventListener('input', () => { $('twErr').hidden = true; });
+$('btnTourneyClear').onclick = () => {
+  const btn = $('btnTourneyClear');
+  if (!twLoad().length) { renderTourney(); return; }
+  if (!twClearArm) {
+    twClearArm = 1;
+    btn.textContent = '再点一下确认清空';
+    clearTimeout(twClearTimer);
+    twClearTimer = setTimeout(() => {
+      twClearArm = 0;
+      btn.textContent = '清空记录';
+    }, 3000);
+    return;
+  }
+  twClearArm = 0;
+  clearTimeout(twClearTimer);
+  btn.textContent = '清空记录';
+  twSave([]);
+  renderTourney();
+};
+
 function readName(fallback) {
   const v = ($('playerName').value || '').trim();
   return v || fallback;
@@ -2091,34 +2398,15 @@ $('btnClose').onclick = () => $('overlay').classList.remove('show');
 /**
  * 规则与图例。
  *
- * 主菜单和对局页共用这一个弹层，区别只在「看多少」：
- *   · 从主菜单打开 → both：经典规则在前、魔改版整节压在最后，两套都看
- *   · 从对局里打开 → 只看当前这一局用的那套（classic / chaos）
- * 具体哪些段落、哪些数字该显示，交给 CSS 按 #rulesModal 的 data-scope 处理，
- * 这里只负责把 scope 和标题右边那枚小标签摆好。
+ * 主菜单和对局页共用这一个弹层。v1.7 起只讲经典规则（魔改版入口已下架），
+ * 以前「按版本显示多少」的 data-scope / 标签机制一并移除 —— 打开就看全套。
  */
-function openRules(scope) {
-  const modal = $('rulesModal');
-  const use = scope === 'chaos' ? 'chaos' : (scope === 'classic' ? 'classic' : 'both');
-  modal.dataset.scope = use;
-
-  const tag = $('rulesScopeTag');
-  if (tag) {
-    if (use === 'both') {
-      tag.hidden = true;
-      tag.textContent = '';
-    } else {
-      const meta = S.meta && S.meta.variants && S.meta.variants[use];
-      tag.textContent = (meta && meta.label) || (use === 'chaos' ? '魔改版' : '经典版');
-      tag.className = 'scope-tag ' + use;
-      tag.hidden = false;
-    }
-  }
-  modal.classList.add('show');
+function openRules() {
+  $('rulesModal').classList.add('show');
 }
 
-$('btnRulesMenu').onclick = () => { SFX.play('click'); openRules('both'); };
-$('btnRules').onclick = () => { SFX.play('click'); openRules(S.variant); };
+$('btnRulesMenu').onclick = () => { SFX.play('click'); openRules(); };
+$('btnRules').onclick = () => { SFX.play('click'); openRules(); };
 $('btnRulesClose').onclick = () => $('rulesModal').classList.remove('show');
 $('btnChangelog').onclick = () => $('changelogModal').classList.add('show');
 $('btnChangelogClose').onclick = () => $('changelogModal').classList.remove('show');
@@ -2159,33 +2447,22 @@ window.__pw = {
   get variant() { return S.variant; },
   /** 音效是否开着 */
   get sfxOn() { return SFX.on; },
+  /** 锦标赛进行中的载荷（v1.7）：未武装时是 null，uicheck 验证采集链路用 */
+  get tourney() { return S.tourney; },
+  get tourneyPending() { return TW.pending; },
   /** 当前生效的规则数值（经典/魔改），等待房时是 null */
   get rules() { return (S.state && S.state.rules) || null; },
-  /** 规则弹层当前的显示范围：'both' | 'classic' | 'chaos' */
-  get rulesScope() { return $('rulesModal').dataset.scope || ''; },
-  /** 规则弹层的只读体检：哪几节在显示、哪几处变体差异是显示着的 */
+  /** 规则弹层的只读体检：哪几节在显示（v1.7 起只有一套规则，无版本差异） */
   rulesView() {
     const modal = $('rulesModal');
     const shown = (el) => Boolean(el && el.offsetParent !== null);
     const body = modal.querySelector('.rules-body');
     return {
-      scope: modal.dataset.scope || '',
       open: modal.classList.contains('show'),
-      tag: (() => {
-        const t = $('rulesScopeTag');
-        return t && !t.hidden ? t.textContent : '';
-      })(),
       sections: Array.from(body.querySelectorAll('.rules-sec')).map((s) => ({
         title: (s.querySelector('h3') || {}).textContent || '',
-        rules: s.dataset.rules || 'both',
         shown: shown(s),
       })),
-      variants: Array.from(body.querySelectorAll('.rv')).map((s) => ({
-        kind: s.classList.contains('rv-chaos') ? 'chaos' : 'classic',
-        shown: shown(s),
-      })),
-      // 魔改版专属的图例行（混沌格）
-      chaosLegend: shown(body.querySelector('.tb-chaos')),
     };
   },
   /** 中立棋子的实时位置（相对舞台中心），测「它到底在不在上方」用 */
@@ -2274,7 +2551,6 @@ async function boot() {
   sel.value = '2';
 
   renderChangelog();
-  renderVariantHints();
 
   if (PW_STATIC) {
     // 静态版没有 /api/info 这个接口，规则数值在脚本加载时已经从本地服务端取好
@@ -2286,32 +2562,11 @@ async function boot() {
     S.meta = await res.json();
   }
   renderNetHint();
-  renderVariantHints();
   autoJoinIfRequested();
 
   // 访问量统计（仅静态单机版；模块不存在时静默跳过）
   if (PW_STATIC && window.PW_STATS) {
     try { window.PW_STATS.boot(); } catch (e) { /* 统计不能影响游戏 */ }
-  }
-}
-
-/**
- * 主菜单那两张「魔改版」卡片下面的小字，按服务端真正的数值写。
- * 以前这种说明都是硬编码在 HTML 里的，改一次规则就得改两处、还容易忘。
- */
-function renderVariantHints() {
-  const v = S.meta && S.meta.variants && S.meta.variants.chaos;
-  if (!v) return;
-  const ev = (S.meta && S.meta.chaosEvents) || {};
-  Array.from(document.querySelectorAll('[data-chaos-hint]')).forEach((el) => {
-    el.textContent = `${v.startButtons} 纽扣起步 · 前方 ${v.marketVisible} 选 1 · ` +
-      `${v.chaosSpaces.length} 个混沌格 · 7×7 奖励 +${v.bonusBonus}`;
-  });
-  const evEl = $('chaosEventHint');
-  if (evEl) {
-    evEl.innerHTML =
-      `<b>天赐</b> 白拿 ${ev.bonus} 纽扣 · <b>苛捐</b> 扣 ${ev.toll} 纽扣 · ` +
-      `<b>命运交换</b> 与纽扣最多的对手对调 · <b>时间跃迁</b> 额外前进 ${ev.leap} 格`;
   }
 }
 
