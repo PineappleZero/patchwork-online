@@ -630,6 +630,29 @@ kbd {
 .pc-tag.bot { color: var(--blue); border-color: #33506b; }
 .pc-tag[hidden] { display: none; }
 
+/* v1.6.7：电脑席位的难度徽章（挂在名字旁）。困难最醒目（金），普通蓝，轻松灰。 */
+.pc-level {
+  flex: none;
+  font-size: 10.5px;
+  line-height: 16px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  border-radius: 999px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  color: var(--text-faint);
+  background: rgba(255, 255, 255, .03);
+}
+.pc-level.inline { margin-left: 6px; vertical-align: middle; }
+.pc-level[data-level="hard"] {
+  color: #1a1206;
+  background: linear-gradient(180deg, #f4cd7c, #e0a63f);
+  border-color: #f0c469;
+  box-shadow: 0 0 10px rgba(232, 181, 99, .35);
+}
+.pc-level[data-level="normal"] { color: #9ecbff; border-color: #33506b; background: rgba(80, 140, 200, .12); }
+.pc-level[data-level="easy"] { color: var(--text-faint); border-color: var(--line); }
+
 .pc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 9px; }
 .pc-name { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 .pc-stats { display: flex; gap: 10px; flex: none; }

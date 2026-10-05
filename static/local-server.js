@@ -127,7 +127,8 @@
         full: true,
         canStart: false,
         seats: this.seats.map((s, i) => (s
-          ? { name: s.name, connected: s.connected, host: i === 0, bot: this.botSeats.has(i) }
+          ? { name: s.name, connected: s.connected, host: i === 0, bot: this.botSeats.has(i),
+              level: this.botSeats.has(i) ? this.botLevel : null }
           : null)),
         playerNames: this.playerNames,
         botLevel: this.botLevel,
@@ -142,6 +143,7 @@
           index: p.index,
           name: p.name,
           bot: p.bot,
+          level: p.bot ? this.botLevel : null,
           buttons: p.buttons,
           time: p.time,
           board: p.board,
@@ -186,11 +188,18 @@
         let events = [];
         if (st.pendingLeather.length) {
           const cell = ai.chooseLeatherCell(st, seat, this.botLevel);
-          engine.placeLeather(st, seat, cell.row, cell.col);
-          events = [{ type: 'leatherPlaced', row: cell.row, col: cell.col, player: seat }];
-        } else {
+          if (!cell) {
+            // 板子已填满，皮革无处可放 —— 让引擎作废它（legalActions 会 shift），
+            // 再当普通回合走。不能直接 return，否则 bot 循环会停。
+            engine.legalActions(st);
+          } else {
+            engine.placeLeather(st, seat, cell.row, cell.col);
+            events = [{ type: 'leatherPlaced', row: cell.row, col: cell.col, player: seat }];
+          }
+        }
+        if (!st.pendingLeather.length) {
           const action = ai.chooseAction(st, seat, this.botLevel);
-          if (!action) return;
+          if (!action) { this.broadcast(); this.maybeRunBot(); return; }
           events = action.type === 'advance'
             ? engine.advance(st, seat).events
             : engine.buyPatch(st, seat, action.patchId, action.oriIndex, action.row, action.col).events;

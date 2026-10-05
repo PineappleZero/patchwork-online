@@ -219,43 +219,105 @@ function boardStats(board) {
 }
 
 /**
- * hard 的「局面价值」——直接朝真实计分靠。
+ * hard 的「局面价值」—— 直接朝真实计分靠，并尽量把「未来潜力」算准。
  *
- * 把当前局面当成现在就终局，算自己的 total，再减去对手里最高的 total，
- * 得到一个净分。这个量跟「谁赢」的判据完全一致，前瞻的叶节点就用它。
+ * 把当前局面当成终局算出净分（我 − 对手最高分），再叠未来潜力：
+ *   · 剩余圈数里**真正还能填掉的空格**（扣掉彻底填不满的孤立小洞）
+ *   · 已积累 income 按剩余圈数折算
+ *   · 7×7 奖励的「临门一脚」
  *
- * 为了不让它变成「只看眼前、绝不买牌」，再叠一点对**未来潜力**的估计：
- *   · 已积累的 income（以后每轮还能收）按剩余圈数折算
- *   · 还剩多少空格 × 罚分（这是终局要扣的）
- * 两者都是绝对值，不参与「增量」问题（因为这里是给整个局面定价，
- * 不是给单个动作定价）。
+ * ⚠️ 关键是把潜力算「准」而不是算「多」：如果给对手也灌一堆乐观潜力，
+ * 净差会被抹平，hard 就变得不敢进攻。这里对**对手**的填格潜力打了折
+ * （对手未必能吃到他要的补丁 —— 圈是共享的），所以 hard 更愿意抢。
  */
 function positionValue(state, mySeat) {
   const rules = state.rules || {};
   const pen = rules.emptyPenalty || 2;
-  const my = state.players[mySeat];
-  const myScore = engine.score(state, mySeat).total;
+  const o = state.players[mySeat];
+  const oScore = engine.score(state, mySeat).total;
 
-  // 我在终局前还能把多少空格填上？粗估：剩余时间里平均每轮盖 2.5 格
-  const roundsLeft = Math.max(0, LAST_SPACE - my.time) / 3.2;
-  const fillable = Math.min(engine.emptySpaces(my.board), Math.round(roundsLeft * 2.2));
-  const futureCover = fillable * pen;        // 能救回来的罚分
-  const futureIncome = my.incomeIcons * roundsLeft * 0.9;  // 每轮还收的纽扣
-
-  let mine = myScore + futureCover + futureIncome;
+  const mine = oScore + potentialOf(o);
 
   let bestOpp = -Infinity;
   for (const p of state.players) {
     if (p.index === mySeat) continue;
-    const oppScore = engine.score(state, p.index).total;
-    const oppRounds = Math.max(0, LAST_SPACE - p.time) / 3.2;
-    const oppFill = Math.min(engine.emptySpaces(p.board), Math.round(oppRounds * 2.2));
-    const oppVal = oppScore + oppFill * pen + p.incomeIcons * oppRounds * 0.9;
-    if (oppVal > bestOpp) bestOpp = oppVal;
+    const v = engine.score(state, p.index).total + potentialOf(p) * OPP_POTENTIAL;
+    if (v > bestOpp) bestOpp = v;
   }
   if (bestOpp === -Infinity) bestOpp = 0;
 
   return mine - bestOpp;
+}
+
+/** 一块板子的「未来潜力」估值（绝对值，单位：分） */
+function potentialOf(p) {
+  const pen = 2;
+  // 剩余轮数：每前进约 3.2 格算一轮（经验值）
+  const roundsLeft = Math.max(0, LAST_SPACE - p.time) / 3.2;
+
+  // 能被填掉的空格：扣掉「孤立小洞」——面积 ≤1 的死洞永远填不了，
+  // 面积 2 的洞要靠一块恰好 2 格的补丁或皮革，成功率低，折半计。
+  const empty = engine.emptySpaces(p.board);
+  const useless = countUselessHoles(p.board);
+  const useful = Math.max(0, empty - useless);
+  const fillable = Math.min(useful, Math.round(roundsLeft * 2.6));
+  const futureCover = fillable * pen;
+
+  const futureIncome = p.incomeIcons * roundsLeft * 0.9;
+
+  // 7×7 临门一脚：已经盖上大片、只差一点点时，这个奖励值得抢
+  let sevenRush = 0;
+  if (!p.hasBonusTile) {
+    const deficit = sevenDeficit(p.board);
+    if (deficit > 0 && deficit <= 6) sevenRush = (7 - deficit) * 4.5;
+  }
+
+  return futureCover + futureIncome + sevenRush;
+}
+
+/** 面积 ≤1 的孤立洞数量（这些格子几乎注定填不上，别把它算进潜力） */
+function countUselessHoles(board) {
+  const seen = Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(false));
+  let n = 0;
+  for (let r = 0; r < BOARD_SIZE; r += 1) {
+    for (let c = 0; c < BOARD_SIZE; c += 1) {
+      if (board[r][c] !== null || seen[r][c]) continue;
+      const stack = [[r, c]];
+      seen[r][c] = true;
+      let size = 0;
+      while (stack.length) {
+        const [cr, cc] = stack.pop();
+        size += 1;
+        for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const rr = cr + dr; const cc2 = cc + dc;
+          if (rr < 0 || cc2 < 0 || rr >= BOARD_SIZE || cc2 >= BOARD_SIZE) continue;
+          if (seen[rr][cc2] || board[rr][cc2] !== null) continue;
+          seen[rr][cc2] = true;
+          stack.push([rr, cc2]);
+        }
+      }
+      if (size <= 1) n += size;
+      else if (size === 2) n += 1;   // 面积 2 的小洞只算半格「没救」
+    }
+  }
+  return n;
+}
+
+/** 还差多少格才能凑出 7×7（返回 0 表示已经够或没戏；用于「临门一脚」判断） */
+function sevenDeficit(board) {
+  let best = 49;   // 最多需要 49 格
+  for (let r0 = 0; r0 + 7 <= BOARD_SIZE; r0 += 1) {
+    for (let c0 = 0; c0 + 7 <= BOARD_SIZE; c0 += 1) {
+      let miss = 0;
+      for (let r = r0; r < r0 + 7 && miss < best; r += 1) {
+        for (let c = c0; c < c0 + 7; c += 1) {
+          if (board[r][c] === null) miss += 1;
+        }
+      }
+      if (miss < best) best = miss;
+    }
+  }
+  return best;
 }
 
 /** 局面的「己方基线」——用于把增量算成绝对值的差值 */
@@ -346,52 +408,105 @@ function evalActionHard(state, player, a, base) {
 }
 
 /**
- * hard 的两层搜索（真正让它变强的那一步）：
+ * hard 的搜索（v1.6.7 加强版）—— 交替极大极小的递归 + Alpha-Beta 剪枝。
  *
- *   第 1 层：我在 sim 上落定这一步（候选已按静态分筛过）。
- *   第 2 层：对手走出他自己最优的一手。
- *   叶节点：用 positionValue 给「对手走完之后的局面」定价 ——
- *           这是一个**直接朝最终计分靠**的净分，天然包含
- *           收入复利、空格罚分、7×7 奖励、以及双方的剩余潜力。
+ * 语义：
+ *   · 轮到我  → 取「让我净分最大」的一手（max）
+ *   · 轮到对手 → 取「让我净分最小」的一手（min，真对抗）
+ *   · 到达层数上限 → 用 positionValue 给局面定价（叶节点）
  *
- * 返回的是「走这步之后我能拿到的净分」，所以越大越好，
- * 调用方直接取最大值即可（不用再叠加静态分，否则重复计权）。
+ * 与 v1.6.6 的差别：
+ *   · 对手的回应**按「压低我的净分」选**（真 min），不再拿对手静态分当代理；
+ *   · 递归多轮（我 → 对手 → 我 → …），并用 **Alpha-Beta 剪枝**把深层搜索压到
+ *     可接受的开销内 —— 这让「加深一层」真的能落地，而不是被预算砍回浅层。
  *
- * 只有当对手的下一手确实存在时才做第 2 层；若下一步还是我
- * （多人局里我时间最短），就直接给自己的局面定价。
+ * 返回「走这步之后我能拿到的净分」，越大越好。
  */
-function searchValue(state, mySeat, action) {
+function searchValue(state, mySeat, action, depth) {
+  const d = depth === undefined ? SEARCH_DEPTH : depth;
   const sim = simulate(state, action);
   if (!sim) return -Infinity;
-
-  if (engine.isGameOver(sim)) return positionValue(sim, mySeat);
-
-  const nextSeat = engine.currentPlayerIndex(sim);
-  if (nextSeat === mySeat) return positionValue(sim, mySeat);
-
-  const opp = sim.players[nextSeat];
-  const oppActions = engine.legalActions(sim);
-  if (!oppActions.length) return positionValue(sim, mySeat);
-
-  // 对手挑一手让「他自己的净分」最高的 —— 等价于压低我的净分
-  const oppBase = baseStats(opp);
-  const scored = oppActions.map((a) => ({ a, s: evalActionHard(sim, opp, a, oppBase) }));
-  scored.sort((x, y) => y.s - x.s);
-  const topOpp = scored.slice(0, OPP_REPLY_TOP);
-
-  let worstForMe = Infinity;
-  for (const { a } of topOpp) {
-    const sim2 = simulate(sim, a);
-    if (!sim2) continue;
-    const v = positionValue(sim2, mySeat);
-    if (v < worstForMe) worstForMe = v;
-  }
-  if (worstForMe === Infinity) return positionValue(sim, mySeat);
-  return worstForMe;
+  return evalPosition(sim, mySeat, d, -Infinity, Infinity);
 }
 
-/** 对手回应的候选上限（对手也要筛，不然两层会炸） */
-const OPP_REPLY_TOP = 16;
+/**
+ * Alpha-Beta：给局面估价。alpha = 我方能保证的下界，beta = 对手能保证的上界。
+ * 剪枝后深层搜索的开销大幅下降，depth 4~5 才跑得动。
+ *
+ * 叶节点统一用 positionValue（绝对净分）—— 搜索内部比较必须同尺度，
+ * 与静态分的混合只在**根节点**做（见 chooseAction），这样 alpha-beta 才成立。
+ */
+function evalPosition(state, mySeat, remaining, alpha, beta) {
+  if (engine.isGameOver(state)) return positionValue(state, mySeat);
+
+  const seat = engine.currentPlayerIndex(state);
+  const actions = engine.legalActions(state);
+  if (!actions.length) return positionValue(state, mySeat);
+  if (remaining <= 0) return positionValue(state, mySeat);
+
+  const iAmToMove = seat === mySeat;
+  const mover = state.players[seat];
+  const base = baseStats(mover);
+  const width = iAmToMove ? SELF_REPLY_TOP : OPP_REPLY_TOP;
+  const coarse = actions
+    .map((a) => ({ a, s: evalActionHard(state, mover, a, base) }))
+    .sort((x, y) => y.s - x.s)
+    .slice(0, width);
+
+  if (iAmToMove) {
+    let best = -Infinity;
+    for (const { a } of coarse) {
+      if (Date.now() > searchDeadline) break;
+      const sim = simulate(state, a);
+      if (!sim) continue;
+      const v = evalPosition(sim, mySeat, remaining - 1, alpha, beta);
+      if (v > best) best = v;
+      if (best > alpha) alpha = best;
+      if (alpha >= beta) break;            // 剪枝：对手不会让我走到这里
+    }
+    return best === -Infinity ? positionValue(state, mySeat) : best;
+  }
+
+  // 轮到对手：取最小
+  let worst = Infinity;
+  for (const { a } of coarse) {
+    if (Date.now() > searchDeadline) break;
+    const sim = simulate(state, a);
+    if (!sim) continue;
+    const v = evalPosition(sim, mySeat, remaining - 1, alpha, beta);
+    if (v < worst) worst = v;
+    if (worst < beta) beta = worst;
+    if (alpha >= beta) break;              // 剪枝：我不会走让我更差的那条
+  }
+  return worst === Infinity ? positionValue(state, mySeat) : worst;
+}
+
+/**
+ * 给**对手**未来潜力的折扣（1 = 完全承认，<1 = 打折）。
+ * 圈是共享的，对手未必真能吃到他要的补丁，所以打折后 hard 更敢抢、
+ * 不会因为「对手理论上也能填」就畏手畏脚。
+ */
+const OPP_POTENTIAL = Number(process.env.PW_OPP_POT) || 0.75;
+
+/** 对手回应的候选上限（对手也要筛，不然多层会炸） */
+const OPP_REPLY_TOP = Number(process.env.PW_OPP_TOP) || 16;
+
+/** 轮到我时的候选上限（比对手那层更窄，成本更敏感） */
+const SELF_REPLY_TOP = Number(process.env.PW_SELF_TOP) || 10;
+
+/**
+ * 搜索层数（我 → 对手 → 我 → …）。有 Alpha-Beta 剪枝兜着，
+ * 6 层也跑得动；层数越多越强，超时由 searchDeadline 兜底。
+ * 扫参实测（各 100 局）：6 层对 normal 80.0%，4 层（310 局合计）约 77%。
+ */
+const SEARCH_DEPTH = Number(process.env.PW_DEPTH) || 6;
+
+/**
+ * 当前这次决策的截止时刻（毫秒时间戳）。由 chooseAction 在开始搜索前设好，
+ * searchValue / evalPosition 靠它「边搜边看表」避免卡顿。
+ * 用模块级变量而不是层层传参，是为了少改签名、读写也便宜。
+ */
+let searchDeadline = Infinity;
 
 /**
  * 在副本上执行一个动作，返回新 state。
@@ -456,9 +571,9 @@ const LOOKAHEAD_TOP = 80;
 /**
  * hard 单步搜索的时间预算（毫秒）。
  * 正常局面 ~30ms 就搜完了；钱多、可选补丁多的大局面会膨胀到几百毫秒，
- * 超过这个上限就收缩候选宽度。350ms 是「思考一下」和「卡顿」的分界。
+ * 超过这个上限就收缩候选宽度。500ms 是给六层深搜留的口子，落子仍不至卡顿。
  */
-const TIME_BUDGET_MS = 350;
+const TIME_BUDGET_MS = Number(process.env.PW_BUDGET) || 500;
 
 /** 按合法动作规模挑初始候选宽度：动作越多，每个候选越贵，宽度就收小 */
 function top0Width(actionCount) {
@@ -476,7 +591,7 @@ function top0Width(actionCount) {
  * 归一化到「本批候选里的相对排名」再混 —— 见 chooseAction 里的 z-score。
  * MIX 由实测扫描确定，越大越偏「该买就买」，越小越偏「算细账」。
  */
-const MIX = 0.55;
+const MIX = Number(process.env.PW_MIX) || 0.55;
 
 /** 归一化：把一组数变成 z-score（均值 0、标准差 1）；全相等时返回全 0 */
 function zscores(arr) {
@@ -519,6 +634,7 @@ function chooseAction(state, playerIndex, level) {
      * （已搜过的分数照样保留，只是不再往里加），保证单步 ≤ ~350ms。
      */
     const deadline = Date.now() + TIME_BUDGET_MS;
+    searchDeadline = deadline;   // 供 searchValue / evalPosition 内部看表
     const width = Math.max(6, Math.min(LOOKAHEAD_TOP, top0Width(actions.length)));
     const top = scored.slice(0, width);
 
@@ -528,6 +644,7 @@ function chooseAction(state, playerIndex, level) {
       rawA.push(searchValue(state, playerIndex, a));
       if (Date.now() > deadline) break;   // 超时就停，剩下的不再搜
     }
+    searchDeadline = Infinity;
     // 没搜完的候选按「静态分」兜底，避免它们被当成 -Infinity 直接淘汰
     while (rawA.length < top.length) rawA.push(null);
     const zS = zscores(rawS);
@@ -566,7 +683,7 @@ function chooseAction(state, playerIndex, level) {
 function chooseLeatherCell(state, playerIndex, level) {
   const player = state.players[playerIndex];
   const board = player.board;
-  let best = { row: 0, col: 0 };
+  let best = null;
   let bestScore = -Infinity;
   for (let r = 0; r < BOARD_SIZE; r += 1) {
     for (let c = 0; c < BOARD_SIZE; c += 1) {
@@ -596,6 +713,8 @@ function chooseLeatherCell(state, playerIndex, level) {
       if (s > bestScore) { bestScore = s; best = { row: r, col: c }; }
     }
   }
+  // 整块板子已经填满：没有合法落点。返回 null，让调用方跳过这一步，
+  // 否则会拿初值 (0,0) 去放 —— 那里必然已被占用，引擎会抛「该格已被占用」。
   return best;
 }
 
@@ -607,12 +726,21 @@ function normalizeLevel(level) {
   return LEVELS.includes(level) ? level : 'normal';
 }
 
-/** 电脑对手在界面上显示的名字（按难度加后缀，困难档加「·高手」） */
-function botName(level) {
-  const lv = normalizeLevel(level);
-  if (lv === 'hard') return 'wzzzhhhhh·高手';
-  if (lv === 'easy') return 'wzzzhhhhh·轻松';
+/**
+ * 电脑对手在界面上显示的名字。
+ * v1.6.7 起名字回归纯「wzzzhhhhh」—— 难度不再塞进名字里，
+ * 改由界面在旁边挂一枚难度徽章（见 levelLabel），这样更好认、也不重复。
+ */
+function botName() {
   return 'wzzzhhhhh';
+}
+
+/** 难度的中文标签（给界面显示徽章用） */
+function levelLabel(level) {
+  const lv = normalizeLevel(level);
+  if (lv === 'hard') return '困难';
+  if (lv === 'easy') return '轻松';
+  return '普通';
 }
 
 module.exports = {
@@ -627,5 +755,6 @@ module.exports = {
   sharedEdges,
   normalizeLevel,
   botName,
+  levelLabel,
   LEVELS,
 };

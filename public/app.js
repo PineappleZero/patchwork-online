@@ -167,6 +167,9 @@ function showScreen(name) {
   ['menu', 'game'].forEach((id) => $(id).classList.toggle('active', id === name));
 }
 
+/* 人机难度 → 徽章文字（v1.6.7） */
+const LEVEL_TEXT = { hard: '困难', normal: '普通', easy: '轻松' };
+
 /* ---------------- 谁能动手 ---------------- */
 /** 我现在代表哪个座位操作：同机模式跟着当前行动方走 */
 function actSeat() {
@@ -561,6 +564,21 @@ function renderPlayers() {
     tag.textContent = p.bot ? '电脑' : (isMe ? '你' : (st.local ? '' : ''));
     tag.hidden = !tag.textContent;
     tag.classList.toggle('bot', !!p.bot);
+
+    /* v1.6.7：电脑席位在名字旁挂一枚难度徽章（困难 / 普通 / 轻松）。
+       徽章插在名字后面，和「电脑」标签分开 —— 名字保持纯 wzzzhhhhh。 */
+    let lv = card.querySelector('.pc-level');
+    if (p.bot && p.level) {
+      if (!lv) {
+        lv = document.createElement('span');
+        lv.className = 'pc-level';
+        card._name.insertAdjacentElement('afterend', lv);
+      }
+      lv.textContent = LEVEL_TEXT[p.level] || p.level;
+      lv.dataset.level = p.level;
+    } else if (lv) {
+      lv.remove();
+    }
 
     card._buttons.textContent = p.buttons;
     card._time.textContent = p.time;
@@ -1381,8 +1399,10 @@ function renderWait() {
     if (!s) return;
     const row = document.createElement('div');
     row.className = 'wait-row';
+    const nameHtml = escapeHtml(s.name)
+      + ((s.bot && s.level) ? ` <span class="pc-level inline" data-level="${s.level}">${LEVEL_TEXT[s.level] || s.level}</span>` : '');
     row.innerHTML = `<span class="wait-seat">${i + 1}</span>` +
-      `<span class="wait-name">${escapeHtml(s.name)}</span>` +
+      `<span class="wait-name">${nameHtml}</span>` +
       `<span class="wait-tags">${i === 0 ? '房主' : ''}${i === 0 && !s.connected ? ' · ' : ''}${s.connected ? '' : '离线'}</span>`;
     list.appendChild(row);
   });
@@ -1440,10 +1460,14 @@ function showResult(result) {
     const s = result.scores[seat];
     const p = st.players[seat];
     const medal = idx === 0 ? '1' : String(idx + 1);
-    const you = (!local && seat === S.seat) ? ' <span class="tag-you">你</span>' : '';
+    const tagYour = (!local && seat === S.seat) ? ' <span class="tag-you">你</span>' : '';
+    const tagBot = p.bot ? '<span class="tag-you">电脑</span>' : '';
+    // v1.6.7：电脑席位补一枚难度徽章
+    const tagLv = (p.bot && p.level)
+      ? `<span class="pc-level inline" data-level="${p.level}">${LEVEL_TEXT[p.level] || p.level}</span>` : '';
     return `<tr class="${idx === 0 ? 'first' : ''}">
       <td class="rk">${medal}</td>
-      <td class="nm">${escapeHtml(p.name)}${p.bot ? '<span class="tag-you">电脑</span>' : ''}${you}</td>
+      <td class="nm">${escapeHtml(p.name)}${tagBot}${tagLv}${tagYour}</td>
       <td>${s.buttons}</td>
       <td>${s.bonus}</td>
       <td>−${s.penalty}</td>
@@ -1725,8 +1749,19 @@ function escapeHtml(s) {
 /* ---------------- 更新日志 ---------------- */
 const CHANGELOG = [
   {
-    v: 'v1.6.6',
+    v: 'v1.6.7',
     date: '当前',
+    items: [
+      '<b>困难人机又变强了一截</b>：上一版是「我一手 → 对手最凶一手」，这一版改成<b>能看六层</b>的递归搜索（我 → 对手 → 我 → 对手 → 我 → 对手），并且用 <b>Alpha-Beta 剪枝</b>把深搜压进每步 0.5 秒的时间预算里 —— 看得深得多，也不至于卡。',
+      '<b>它现在会算「未来」</b>：给局面定价时，不再拿「空格 × 罚分」粗估，而是扣掉<b>那些注定填不上的孤立小洞</b>，还会算 7×7 奖励的「临门一脚」—— 差几格就能拼满时它会拼命去抢。',
+      '<b>它更敢抢了</b>：圈上的补丁是两家共享的，对手未必真吃得到他想要的。新版把「对手未来也能填回来」的乐观预期打了个折，所以困难人机不再被动等，而是<b>先下手把好位置占掉</b>。',
+      '<b>名字旁边现在直接写着难度</b>：对局页里 wzzzhhhhh 后面多了一枚金色徽章（困难 / 普通 / 轻松），开局、等待房、结算表里都能一眼看到这一局打的是哪一档。',
+      '<b>实测强度</b>：对「普通」胜率由 73.7% 提到 <b>80%</b>，对「轻松」维持在八成上下；看得更深所以想得更久 —— 每步 0.5 秒预算，落子平均 0.3 秒上下、偶尔贴着预算上限，等它一下就好。',
+    ],
+  },
+  {
+    v: 'v1.6.6',
+    date: '上一版',
     items: [
       '<b>人机多了「困难」档</b>：主菜单的单机选择里，除了「轻松 / 普通」，现在还有<b>困难（很强）</b> —— 这位是真的会算。</p>',
       '<b>困难人机每一手都会「想两步」</b>：先假设自己这么下，再替对手挑出最凶的还击，把局面照着「现在就是终局」算一遍净差（我减你最差），最后叠上剩下的空位还能填多少、收入还能吃几轮。不是拍脑袋，是把我方与对方的分数都推演过再定。',

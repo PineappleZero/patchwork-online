@@ -491,6 +491,9 @@ function ok(cond, label, extra) {
     await sleep(600);
 
     console.log('\n[2] 人机对战');
+    // v1.6.7：先选「困难」，好顺带验证名字旁的难度徽章
+    //（app.js 在点击时才读 #botLevel.value，所以直接赋值即可）
+    await evaluate(ws, `document.getElementById('botLevel').value = 'hard'`);
     await evaluate(ws, `document.getElementById('btnSolo').click()`);
     await waitFor(ws, `document.getElementById('game').classList.contains('active')`, 8000, '进入对局');
     await waitFor(ws, `document.querySelectorAll('#playersWrap .player-card').length === 2`, 8000, '两张玩家卡');
@@ -501,6 +504,8 @@ function ok(cond, label, extra) {
     const solo = await evaluate(ws, `(function(){
       const cards = document.querySelectorAll('#playersWrap .player-card');
       const botTag = document.querySelector('#playersWrap .player-card .pc-tag.bot');
+      const botCard = botTag ? botTag.closest('.player-card') : null;
+      const lvEl = botCard ? botCard.querySelector('.pc-level') : null;
       return {
         n: cards.length,
         gridCols: getComputedStyle(document.getElementById('playersWrap')).gridTemplateColumns.split(' ').length,
@@ -508,6 +513,11 @@ function ok(cond, label, extra) {
         botText: botTag ? botTag.textContent : '',
         botName: (document.querySelector('#playersWrap .player-card .pc-tag.bot')
           ? botTag.closest('.player-card').querySelector('.pc-name').textContent : ''),
+        botLevel: lvEl ? lvEl.textContent : '',
+        botLevelKey: lvEl ? (lvEl.dataset.level || '') : '',
+        // 徽章紧跟在名字后面（同一个 pc-head 里，名字的下一个兄弟）
+        lvAfterName: !!(lvEl && lvEl.previousElementSibling &&
+          lvEl.previousElementSibling.classList.contains('pc-name')),
         mode: document.getElementById('modeTag').textContent,
         copyHidden: getComputedStyle(document.getElementById('btnCopy')).display === 'none',
         logs: document.querySelectorAll('#log div').length,
@@ -516,6 +526,10 @@ function ok(cond, label, extra) {
     ok(solo.n === 2, '渲染 2 张玩家卡');
     ok(solo.bot, '电脑席位带「电脑」标签', solo.botText);
     ok(solo.botName === 'wzzzhhhhh', '人机对手叫 wzzzhhhhh', solo.botName);
+    // v1.6.7：名字旁有难度徽章，且显示的是本局选的「困难」
+    ok(solo.botLevelKey === 'hard', '电脑席位带难度标识（data-level=hard）', solo.botLevelKey);
+    ok(solo.botLevel === '困难', '难度徽章显示「困难」', solo.botLevel);
+    ok(solo.lvAfterName, '难度徽章紧挨着名字（pc-name 的下一个兄弟）');
     ok(solo.gridCols === 2, '双人两列并排', '实际 ' + solo.gridCols + ' 列');
     ok(solo.mode === '人机对战', '模式标签正确', solo.mode);
     ok(solo.copyHidden, '单机模式隐藏「复制邀请」');
@@ -874,9 +888,9 @@ function ok(cond, label, extra) {
     })()`);
     ok(cl.show, '更新日志弹层能打开');
     ok(cl.vers >= 3, '包含 3 个及以上版本', '实际 ' + cl.vers);
-    ok(cl.first.indexOf('v1.6.6') === 0, '首条是 v1.6.6', cl.first);
-    ok(cl.items >= 4, 'v1.6.6 条目不少于 4 条（困难人机那几项）', '实际 ' + cl.items);
-    ok(cl.versions.slice(0, 11).join(',') === 'v1.6.6,v1.6.5,v1.6.4,v1.6.3,v1.6.2,v1.6.1,v1.6,v1.5.1,v1.5,v1.4.1,v1.4',
+    ok(cl.first.indexOf('v1.6.7') === 0, '首条是 v1.6.7', cl.first);
+    ok(cl.items >= 4, 'v1.6.7 条目不少于 4 条（加强困难人机 + 难度徽章）', '实际 ' + cl.items);
+    ok(cl.versions.slice(0, 11).join(',') === 'v1.6.7,v1.6.6,v1.6.5,v1.6.4,v1.6.3,v1.6.2,v1.6.1,v1.6,v1.5.1,v1.5,v1.4.1',
       '版本号是连续的（含补记的 1.1）', cl.versions.join(' / '));
     await screenshot(ws, 'v165-4-changelog.png');
 

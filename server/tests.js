@@ -456,7 +456,10 @@ console.log('\n[21b] 困难难度（v1.6.6）');
 
 check('normalizeLevel 认 hard', ai.normalizeLevel('hard') === 'hard');
 check('normalizeLevel 把野字符串收敛成 normal', ai.normalizeLevel('xxx') === 'normal');
-check('困难档的电脑名字带「高手」', ai.botName('hard').includes('高手') && ai.botName('hard') !== ai.botName('normal'));
+// v1.6.7：难度不再写进名字，改为对局页面的徽章展示
+check('电脑名字统一是 wzzzhhhhh', ai.botName('hard') === 'wzzzhhhhh' && ai.botName('normal') === 'wzzzhhhhh' && ai.botName('easy') === 'wzzzhhhhh');
+check('levelLabel 给出中文难度名', ai.levelLabel('hard') === '困难' && ai.levelLabel('normal') === '普通' && ai.levelLabel('easy') === '轻松');
+check('levelLabel 野字符串收敛成「普通」', ai.levelLabel('xxx') === '普通');
 
 const hard = playAiGame(2, 'hard');
 check(`困难难度能自己打完（${hard.moves} 手）`, hard.over && hard.moves < 1500);

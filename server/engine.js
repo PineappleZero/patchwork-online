@@ -437,6 +437,12 @@ function legalActions(state) {
         if (player.board[r][c] === null) cells.push({ type: 'leather', player: pending.player, row: r, col: c });
       }
     }
+    // 板子已填满（没有空格）：这枚皮革无处可放 —— 直接作废，
+    // 否则会卡死在「有皮革待放但没有合法落点」的死局里。
+    if (!cells.length) {
+      state.pendingLeather.shift();
+      return legalActions(state);
+    }
     return cells;
   }
   const pi = activePlayerIndex(state);

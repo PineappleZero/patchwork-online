@@ -316,7 +316,8 @@ function serialize(room) {
     full: joinedCount(room) >= room.slots,
     canStart: room.mode === 'online' && !st && joinedCount(room) >= MIN_ONLINE,
     seats: room.seats.map((s, i) => (s
-      ? { name: s.name, connected: s.connected, host: i === 0, bot: room.botSeats.has(i) }
+      ? { name: s.name, connected: s.connected, host: i === 0, bot: room.botSeats.has(i),
+          level: room.botSeats.has(i) ? room.botLevel : null }
       : null)),
     playerNames: room.playerNames,
     botLevel: room.botLevel,
@@ -331,6 +332,7 @@ function serialize(room) {
       index: p.index,
       name: p.name,
       bot: p.bot,
+      level: p.bot ? room.botLevel : null,   // 电脑席位的难度，供界面挂徽章
       buttons: p.buttons,
       time: p.time,
       board: p.board,
@@ -457,11 +459,18 @@ function runBot(room) {
     let events = [];
     if (st.pendingLeather.length) {
       const cell = ai.chooseLeatherCell(st, seat, room.botLevel);
-      engine.placeLeather(st, seat, cell.row, cell.col);
-      events = [{ type: 'leatherPlaced', row: cell.row, col: cell.col, player: seat }];
-    } else {
+      if (!cell) {
+        // 板子已填满，这枚皮革无处可放 —— 让引擎把它作废（legalActions 会 shift 掉），
+        // 然后当作普通回合继续，绝不能直接 return（那样 bot 循环会停摆）。
+        engine.legalActions(st);
+      } else {
+        engine.placeLeather(st, seat, cell.row, cell.col);
+        events = [{ type: 'leatherPlaced', row: cell.row, col: cell.col, player: seat }];
+      }
+    }
+    if (!st.pendingLeather.length) {
       const action = ai.chooseAction(st, seat, room.botLevel);
-      if (!action) return;
+      if (!action) { broadcast(room); maybeRunBot(room); return; }
       events = action.type === 'advance'
         ? engine.advance(st, seat).events
         : engine.buyPatch(st, seat, action.patchId, action.oriIndex, action.row, action.col).events;
