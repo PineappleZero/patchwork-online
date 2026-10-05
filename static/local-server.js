@@ -51,7 +51,7 @@
       this.capacity = def.capacity;
       this.local = def.local;
       this.botSeats = new Set(def.botSeats);
-      this.botLevel = opts.botLevel === 'easy' ? 'easy' : 'normal';
+      this.botLevel = ai.normalizeLevel(opts.botLevel);
       this.playerNames = [];
       this.state = null;
       this.history = [];
@@ -59,7 +59,7 @@
       this.botTimer = null;
       this.seats = [];
       this.localNames = [opts.name1, opts.name2].map((n, i) =>
-        cleanName(n, mode === 'local' ? `玩家${i === 0 ? '一' : '二'}` : (i === 0 ? '你' : 'wzzzhhhhh'))
+        cleanName(n, mode === 'local' ? `玩家${i === 0 ? '一' : '二'}` : (i === 0 ? '你' : ai.botName(opts.botLevel)))
       );
       this.connIndex = 0;
       this.start();
@@ -75,7 +75,7 @@
         const isBot = this.botSeats.has(i);
         const name = this.local
           ? this.localNames[i]
-          : (isBot ? 'wzzzhhhhh' : this.localNames[0]);
+          : (isBot ? ai.botName(this.botLevel) : this.localNames[0]);
         list.push({ name, bot: isBot });
       }
       this.playerNames = list.map((x) => x.name);
@@ -185,7 +185,7 @@
       try {
         let events = [];
         if (st.pendingLeather.length) {
-          const cell = ai.chooseLeatherCell(st, seat);
+          const cell = ai.chooseLeatherCell(st, seat, this.botLevel);
           engine.placeLeather(st, seat, cell.row, cell.col);
           events = [{ type: 'leatherPlaced', row: cell.row, col: cell.col, player: seat }];
         } else {

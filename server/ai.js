@@ -3,8 +3,15 @@
 /*
  * 电脑对手。
  *
- * 不是什么棋力怪物，目标只有一个：**看起来像个会玩的人** ——
- * 会挑收益高、好拼的补丁，会躲开拼不上的孤格，也不会傻到一直往前冲。
+ * 三档难度：
+ *   easy   随手乱下，只看眼前收益，噪声很大 —— 给新手找自信。
+ *   normal 目标只有一个：**看起来像个会玩的人** ——
+ *          会挑收益高、好拼的补丁，会躲开拼不上的孤格，也不会傻到一直往前冲。
+ *   hard   真的想赢。在 normal 的评估函数上做三件事：
+ *            ① 评估函数更细（形状贴合度、续拼空间、纽扣的时间价值曲线、终局预判）；
+ *            ② 加一层前瞻 —— 试算「我买这块」之后，对手最优的一步会怎么样；
+ *            ③ 完全不抖随机数，同样的局面永远下同一步。
+ *
  * 规则判定全部交给 engine，这里只负责「挑一个合法动作」。
  */
 
@@ -45,15 +52,105 @@ const W = {
   seven: 28,    // 拼出完整 7x7
 };
 
-/** 评估「买下这块补丁并放在这里」值不值 */
-function scoreBuy(state, player, action, level) {
+/* hard 在 W 之上再追加的一组项 —— 单位对齐「分」 */
+const HW = {
+  fit: 1.5,        // 落点与已有布块的贴合（每一条共享边）
+  pocket: 0.9,     // 填进「只剩这一处能塞」的角落，救回一个原本的死格
+  fragment: 1.2,   // 每新增一块「孤立的小空洞」（面积 1~2），是未来填不满的前兆
+  span: 0.55,      // 每减少一栏/一行跨度，板子更方正
+  nopick: 5.0,     // 预算里没算到的一块补丁被抢走的估值损失（前瞻用）
+};
+
+/** 复制一份拼布板（board 是 9×9，每格 null 或 {id,...}） */
+function cloneBoard(board) {
+  return board.map((row) => row.slice());
+}
+
+/** 把一块补丁按朝向写到副本上，返回新副本 */
+function boardWith(player, patch, ori, row, col) {
+  const board = cloneBoard(player.board);
+  for (const [dr, dc] of ori.cells) board[row + dr][col + dc] = { id: patch.id };
+  return board;
+}
+
+/** 与已有布块共享的边数：贴得越紧，越不容易留下缝 */
+function sharedEdges(board) {
+  let n = 0;
+  for (let r = 0; r < BOARD_SIZE; r += 1) {
+    for (let c = 0; c < BOARD_SIZE; c += 1) {
+      if (board[r][c] === null) continue;
+      if (r + 1 < BOARD_SIZE && board[r + 1][c] !== null) n += 1;
+      if (c + 1 < BOARD_SIZE && board[r][c + 1] !== null) n += 1;
+    }
+  }
+  return n;
+}
+
+/** 空洞块统计：把空格连通块分成面积，返回 { little, big } 的加权碎片代价 */
+function holeFragmentation(board) {
+  const seen = Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(false));
+  let cost = 0;
+  for (let r = 0; r < BOARD_SIZE; r += 1) {
+    for (let c = 0; c < BOARD_SIZE; c += 1) {
+      if (board[r][c] !== null || seen[r][c]) continue;
+      // 洪水填充这个空洞
+      const stack = [[r, c]];
+      seen[r][c] = true;
+      let size = 0;
+      while (stack.length) {
+        const [cr, cc] = stack.pop();
+        size += 1;
+        for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const rr = cr + dr;
+          const cc2 = cc + dc;
+          if (rr < 0 || cc2 < 0 || rr >= BOARD_SIZE || cc2 >= BOARD_SIZE) continue;
+          if (seen[rr][cc2] || board[rr][cc2] !== null) continue;
+          seen[rr][cc2] = true;
+          stack.push([rr, cc2]);
+        }
+      }
+      // 面积 1~2 的小洞最阴：基本注定填不满，最后每格罚 2 分
+      if (size <= 2) cost += size;
+      else if (size <= 4) cost += 1;
+    }
+  }
+  return cost;
+}
+
+/** 被覆盖区域的行跨度 + 列跨度：越小说明拼得越紧凑（越不容易留缝） */
+function spanOf(board) {
+  let minR = BOARD_SIZE;
+  let maxR = -1;
+  let minC = BOARD_SIZE;
+  let maxC = -1;
+  for (let r = 0; r < BOARD_SIZE; r += 1) {
+    for (let c = 0; c < BOARD_SIZE; c += 1) {
+      if (board[r][c] === null) continue;
+      if (r < minR) minR = r;
+      if (r > maxR) maxR = r;
+      if (c < minC) minC = c;
+      if (c > maxC) maxC = c;
+    }
+  }
+  if (maxR < 0) return 0;
+  return (maxR - minR) + (maxC - minC);
+}
+
+/** 终局还差几步时，空格罚分要打折 —— 未来收益有时间价值 */
+function horizonFactor(state, player) {
+  const left = LAST_SPACE - player.time;
+  return Math.max(0.25, Math.min(1, left / 18));
+}
+
+/**
+ * normal 的基础评估（供 easy/normal 用）。
+ * 顺序保持和历史一致，别动它 —— 现有测试盯着 normal 的表现。
+ */
+function scoreBuyNormal(state, player, action, level) {
   const patch = engine.PATCH_BY_ID.get(action.patchId);
   const ori = patch.orientations[action.oriIndex];
 
-  // 在副本上模拟落子
-  const board = player.board.map((row) => row.slice());
-  for (const [dr, dc] of ori.cells) board[action.row + dr][action.col + dc] = { id: patch.id };
-
+  const board = boardWith(player, patch, ori, action.row, action.col);
   const deadDelta = deadCells(board) - deadCells(player.board);
   const grantsSeven = state.bonusTileOwner === null && engine.hasFilledSquare(board, 7);
 
@@ -68,6 +165,102 @@ function scoreBuy(state, player, action, level) {
   if (level === 'easy') s += (Math.random() - 0.5) * 26;
   else s += (Math.random() - 0.5) * 3;         // 一点点抖动，别每局一模一样
   return s;
+}
+
+/**
+ * hard 的评估：在 normal 基础上再叠形状 / 结构 / 时间价值。
+ * **不带随机**，所以同一局面可复现。
+ *
+ * `base` 是当前局面的「基线量」，由 boardStats() 预先算好传进来 ——
+ * 一次决策里所有候选动作共用同一份基线，省掉成千上万次重复计算。
+ */
+function scoreBuyHard(state, player, action, base) {
+  const patch = engine.PATCH_BY_ID.get(action.patchId);
+  if (!patch) return -Infinity;
+  const ori = patch.orientations[action.oriIndex];
+  if (!ori) return -Infinity;
+  const board = boardWith(player, patch, ori, action.row, action.col);
+
+  const st = boardStats(board);
+  const deadDelta = st.dead - base.dead;
+  const grantsSeven = state.bonusTileOwner === null && st.has7;
+  const hz = horizonFactor(state, player);
+
+  let s = 0;
+  s += patch.income * W.income;
+  s += ori.cells.length * W.cell;
+  s -= patch.cost * W.cost;
+  s -= patch.time * W.time;
+  s -= deadDelta * W.dead;
+  if (grantsSeven) s += W.seven;
+
+  // ① 形状贴合：鼓励贴着已有布块放，减少缝
+  s += (st.edges - base.edges) * HW.fit;
+
+  // ② 补空洞：新增碎洞要罚；「本来会死、现在被救活」的格子给点奖励
+  s -= (st.frag - base.frag) * HW.fragment;
+  if (deadDelta < 0) s += (-deadDelta) * HW.pocket;
+
+  // ③ 方正度：跨度收得越紧越好（按棋盘比例缩放，避免压过主要项）
+  s -= (st.span - base.span) * HW.span * (0.5 + 0.5 * hz);
+
+  return s;
+}
+
+/** 一次算齐一块板子的全部结构指标（dead / frag / edges / span / has7） */
+function boardStats(board) {
+  return {
+    dead: deadCells(board),
+    frag: holeFragmentation(board),
+    edges: sharedEdges(board),
+    span: spanOf(board),
+    has7: engine.hasFilledSquare(board, 7),
+  };
+}
+
+/**
+ * hard 的「局面价值」——直接朝真实计分靠。
+ *
+ * 把当前局面当成现在就终局，算自己的 total，再减去对手里最高的 total，
+ * 得到一个净分。这个量跟「谁赢」的判据完全一致，前瞻的叶节点就用它。
+ *
+ * 为了不让它变成「只看眼前、绝不买牌」，再叠一点对**未来潜力**的估计：
+ *   · 已积累的 income（以后每轮还能收）按剩余圈数折算
+ *   · 还剩多少空格 × 罚分（这是终局要扣的）
+ * 两者都是绝对值，不参与「增量」问题（因为这里是给整个局面定价，
+ * 不是给单个动作定价）。
+ */
+function positionValue(state, mySeat) {
+  const rules = state.rules || {};
+  const pen = rules.emptyPenalty || 2;
+  const my = state.players[mySeat];
+  const myScore = engine.score(state, mySeat).total;
+
+  // 我在终局前还能把多少空格填上？粗估：剩余时间里平均每轮盖 2.5 格
+  const roundsLeft = Math.max(0, LAST_SPACE - my.time) / 3.2;
+  const fillable = Math.min(engine.emptySpaces(my.board), Math.round(roundsLeft * 2.2));
+  const futureCover = fillable * pen;        // 能救回来的罚分
+  const futureIncome = my.incomeIcons * roundsLeft * 0.9;  // 每轮还收的纽扣
+
+  let mine = myScore + futureCover + futureIncome;
+
+  let bestOpp = -Infinity;
+  for (const p of state.players) {
+    if (p.index === mySeat) continue;
+    const oppScore = engine.score(state, p.index).total;
+    const oppRounds = Math.max(0, LAST_SPACE - p.time) / 3.2;
+    const oppFill = Math.min(engine.emptySpaces(p.board), Math.round(oppRounds * 2.2));
+    const oppVal = oppScore + oppFill * pen + p.incomeIcons * oppRounds * 0.9;
+    if (oppVal > bestOpp) bestOpp = oppVal;
+  }
+  if (bestOpp === -Infinity) bestOpp = 0;
+
+  return mine - bestOpp;
+}
+
+/** 局面的「己方基线」——用于把增量算成绝对值的差值 */
+function baseStats(player) {
+  return boardStats(player.board);
 }
 
 /** 评估「跳过领纽扣」 */
@@ -93,17 +286,272 @@ function scoreAdvance(state, player, level) {
   return s;
 }
 
+/** hard 版「跳过」：把「领纽扣后每轮还收多少」算进去 */
+function scoreAdvanceHard(state, player) {
+  let frontier = null;
+  for (const p of state.players) {
+    if (p.index === player.index) continue;
+    if (p.time < player.time) continue;
+    if (frontier === null || p.time < frontier) frontier = p.time;
+  }
+  if (frontier === null) return -999;
+  const target = Math.min(frontier + 1, LAST_SPACE);
+  const gained = Math.max(0, target - player.time);
+
+  let s = gained * 1.0;
+  // 领纽扣的直接收益：这一趟会经过多少纽扣格 × 每格收入（折扣算，别为贪它不买牌）
+  const income = player.incomeIcons;
+  s += gained * income * 0.18;
+  // 手头紧时才值得跳过；宽裕时跳过基本是浪费一次落子机会
+  if (player.buttons <= 3) s += 8;
+  else if (player.buttons <= 5) s += 3;
+  if (player.buttons >= 10) s -= 5;
+  if (player.buttons >= 14) s -= 4;
+  // 领先太多还空跑，只会给对手让时间
+  const maxOther = Math.max(...state.players.filter((p) => p.index !== player.index).map((p) => p.time));
+  if (player.time > maxOther + 3) s -= 4;
+  if (target >= LAST_SPACE - 6) s -= 5;
+  return s;
+}
+
+/**
+ * 局面「终局分估计」：把当前局面当成现在就结束，
+ * 直接调 engine.score()。这样纽扣、空格罚分、7×7 奖励的
+ * 相对权重完全跟真实计分一致 —— 比手调权重可靠得多。
+ *
+ * 但直接用它当唯一判据会变成「绝不买牌」（买牌立刻扣钱、盖的格子
+ * 要到最后才值钱），所以最终打分是：
+ *    评估分 = 静态增量分（保证会买牌） + 一个"结构分"（保证拼得好）
+ * 见 scoreBuyHard / chooseAction。
+ */
+function estimateTotal(state, player) {
+  try {
+    return engine.score(state, player.index).total;
+  } catch (e) {
+    return 0;
+  }
+}
+
+/** 单动作（无前瞻）打分，hard 用。base 可省略，省了就地现算（慢一点但正确） */
+function evalActionHard(state, player, a, base) {
+  if (a.type === 'advance') return scoreAdvanceHard(state, player);
+  if (a.type === 'leather') {
+    // 待放置的皮革补丁：只在 pendingLeather 时出现，粗略算「盖住一格」
+    return W.cell;
+  }
+  const patch = engine.PATCH_BY_ID.get(a.patchId);
+  if (!patch) return -Infinity;   // 补丁不在册（理论上不会）——判死，别让整轮崩掉
+  if (!patch.orientations[a.oriIndex]) return -Infinity;
+  return scoreBuyHard(state, player, a, base || baseStats(player));
+}
+
+/**
+ * hard 的两层搜索（真正让它变强的那一步）：
+ *
+ *   第 1 层：我在 sim 上落定这一步（候选已按静态分筛过）。
+ *   第 2 层：对手走出他自己最优的一手。
+ *   叶节点：用 positionValue 给「对手走完之后的局面」定价 ——
+ *           这是一个**直接朝最终计分靠**的净分，天然包含
+ *           收入复利、空格罚分、7×7 奖励、以及双方的剩余潜力。
+ *
+ * 返回的是「走这步之后我能拿到的净分」，所以越大越好，
+ * 调用方直接取最大值即可（不用再叠加静态分，否则重复计权）。
+ *
+ * 只有当对手的下一手确实存在时才做第 2 层；若下一步还是我
+ * （多人局里我时间最短），就直接给自己的局面定价。
+ */
+function searchValue(state, mySeat, action) {
+  const sim = simulate(state, action);
+  if (!sim) return -Infinity;
+
+  if (engine.isGameOver(sim)) return positionValue(sim, mySeat);
+
+  const nextSeat = engine.currentPlayerIndex(sim);
+  if (nextSeat === mySeat) return positionValue(sim, mySeat);
+
+  const opp = sim.players[nextSeat];
+  const oppActions = engine.legalActions(sim);
+  if (!oppActions.length) return positionValue(sim, mySeat);
+
+  // 对手挑一手让「他自己的净分」最高的 —— 等价于压低我的净分
+  const oppBase = baseStats(opp);
+  const scored = oppActions.map((a) => ({ a, s: evalActionHard(sim, opp, a, oppBase) }));
+  scored.sort((x, y) => y.s - x.s);
+  const topOpp = scored.slice(0, OPP_REPLY_TOP);
+
+  let worstForMe = Infinity;
+  for (const { a } of topOpp) {
+    const sim2 = simulate(sim, a);
+    if (!sim2) continue;
+    const v = positionValue(sim2, mySeat);
+    if (v < worstForMe) worstForMe = v;
+  }
+  if (worstForMe === Infinity) return positionValue(sim, mySeat);
+  return worstForMe;
+}
+
+/** 对手回应的候选上限（对手也要筛，不然两层会炸） */
+const OPP_REPLY_TOP = 16;
+
+/**
+ * 在副本上执行一个动作，返回新 state。
+ * engine 的 advance/buyPatch 都直接改传入的 state，所以就深拷一份再跑。
+ */
+function simulate(state, action) {
+  let clone;
+  try {
+    clone = cloneState(state);
+  } catch (e) {
+    return null;
+  }
+  try {
+    if (action.type === 'advance') engine.advance(clone, action.player);
+    else engine.buyPatch(clone, action.player, action.patchId, action.oriIndex, action.row, action.col);
+  } catch (e) {
+    return null;
+  }
+  return clone;
+}
+
+/** 深拷贝局面（比 structuredClone 兼容性好，也不依赖 Node 版本） */
+function cloneState(state) {
+  const players = state.players.map((p) => ({
+    index: p.index,
+    name: p.name,
+    bot: p.bot,
+    buttons: p.buttons,
+    time: p.time,
+    board: cloneBoard(p.board),
+    placed: p.placed.slice(),
+    incomeIcons: p.incomeIcons,
+    hasBonusTile: p.hasBonusTile,
+    finished: p.finished,
+  }));
+  return {
+    variant: state.variant,
+    rules: state.rules,
+    circle: state.circle.slice(),
+    neutral: state.neutral,
+    players,
+    leatherClaimed: state.leatherClaimed.slice(),
+    pendingLeather: state.pendingLeather.slice(),
+    chaosPlan: state.chaosPlan,
+    chaosSet: state.chaosSet,
+    bonusTileOwner: state.bonusTileOwner,
+    finishOrder: state.finishOrder.slice(),
+    arrival: state.arrival.slice(),
+    moveSeq: state.moveSeq,
+    turnCount: state.turnCount,
+    log: [],
+  };
+}
+
+/**
+ * 前瞻的候选上限。合法动作动辄数千个（33 块补丁 × 朝向 × 落点），
+ * 全做前瞻要十几秒。先按静态分排序，只对前几名做前瞻 ——
+ * 静态分已经很差的落点，前瞻也救不回来。
+ */
+const LOOKAHEAD_TOP = 80;
+
+/**
+ * hard 单步搜索的时间预算（毫秒）。
+ * 正常局面 ~30ms 就搜完了；钱多、可选补丁多的大局面会膨胀到几百毫秒，
+ * 超过这个上限就收缩候选宽度。350ms 是「思考一下」和「卡顿」的分界。
+ */
+const TIME_BUDGET_MS = 350;
+
+/** 按合法动作规模挑初始候选宽度：动作越多，每个候选越贵，宽度就收小 */
+function top0Width(actionCount) {
+  if (actionCount > 2500) return 30;
+  if (actionCount > 1200) return 50;
+  return LOOKAHEAD_TOP;
+}
+
+/**
+ * 静态分（增量式）与局面净分（绝对式）的混合比例。
+ *
+ *   value = MIX × 静态增量分 + (1 − MIX) × 局面净分
+ *
+ * 两者量级差很多（静态分 ±30 上下，净分 ±60 上下），所以先各自
+ * 归一化到「本批候选里的相对排名」再混 —— 见 chooseAction 里的 z-score。
+ * MIX 由实测扫描确定，越大越偏「该买就买」，越小越偏「算细账」。
+ */
+const MIX = 0.55;
+
+/** 归一化：把一组数变成 z-score（均值 0、标准差 1）；全相等时返回全 0 */
+function zscores(arr) {
+  const n = arr.length;
+  if (!n) return [];
+  let mean = 0;
+  for (const x of arr) mean += x;
+  mean /= n;
+  let varSum = 0;
+  for (const x of arr) varSum += (x - mean) * (x - mean);
+  const sd = Math.sqrt(varSum / n);
+  if (sd < 1e-9) return arr.map(() => 0);
+  return arr.map((x) => (x - mean) / sd);
+}
+
 /** 挑一个动作：买补丁 or 跳过 */
 function chooseAction(state, playerIndex, level) {
   const player = state.players[playerIndex];
   const actions = engine.legalActions(state);
+  if (!actions.length) return null;
+
+  if (level === 'hard') {
+    const base = baseStats(player);
+    // 第一轮：静态分排序，只把「看着还行」的挑进搜索（数千个动作不可能全搜）
+    const scored = actions.map((a) => ({ a, s: evalActionHard(state, player, a, base) }));
+    scored.sort((x, y) => y.s - x.s);
+
+    /*
+     * 第二轮：两层搜索 + 静态分混合。
+     *
+     * 纯两层搜索（叶节点用 positionValue）实测「求稳」过头 ——
+     * 它会把空格留多、指望对手也留空，结果对 normal 只有 69% 胜率。
+     * 所以这里把两者**加权混合**：
+     *   · 静态分（增量式）保证「该买的牌一定买、该盖的格一定盖」；
+     *   · positionValue 净差（绝对式）保证「买哪块、盖哪里」更贴近终局胜负。
+     * 两个量量级不同，先各自 z-score 归一化再按 MIX 混。
+     *
+     * ⚠️ 时间预算：钱多的时候合法动作能到几千个，固定宽度最慢近 1 秒，
+     * 玩家会明显感觉卡。所以边搜边看表，超时就**收缩候选宽度**
+     * （已搜过的分数照样保留，只是不再往里加），保证单步 ≤ ~350ms。
+     */
+    const deadline = Date.now() + TIME_BUDGET_MS;
+    const width = Math.max(6, Math.min(LOOKAHEAD_TOP, top0Width(actions.length)));
+    const top = scored.slice(0, width);
+
+    const rawS = top.map((t) => t.s);
+    const rawA = [];
+    for (const { a } of top) {
+      rawA.push(searchValue(state, playerIndex, a));
+      if (Date.now() > deadline) break;   // 超时就停，剩下的不再搜
+    }
+    // 没搜完的候选按「静态分」兜底，避免它们被当成 -Infinity 直接淘汰
+    while (rawA.length < top.length) rawA.push(null);
+    const zS = zscores(rawS);
+    const filledA = rawA.map((x) => (x === null ? NaN : x));
+    const zA = zscores(filledA.filter((x) => !Number.isNaN(x)));
+    let zi = 0;
+    const zAfull = filledA.map((x) => (Number.isNaN(x) ? 0 : zA[zi++]));
+
+    let best = top[0].a;
+    let bestScore = -Infinity;
+    for (let i = 0; i < top.length; i += 1) {
+      // 没搜到深度的候选（zAfull 记 0）只吃静态分那一半，不会凭空占优
+      const v = MIX * zS[i] + (1 - MIX) * zAfull[i];
+      if (v > bestScore) { bestScore = v; best = top[i].a; }
+    }
+    return best;
+  }
+
   let best = null;
   let bestScore = -Infinity;
-
   actions.forEach((a) => {
     const s = a.type === 'advance'
       ? scoreAdvance(state, player, level)
-      : scoreBuy(state, player, a, level);
+      : scoreBuyNormal(state, player, a, level);
     if (s > bestScore) { bestScore = s; best = a; }
   });
   return best;
@@ -112,9 +560,12 @@ function chooseAction(state, playerIndex, level) {
 /**
  * 皮革补丁落点：优先填「会被彻底围死」的格子，
  * 其次挑周围已有补丁最多的位置，让拼布板尽量方正。
+ *
+ * hard 额外看：填完之后剩下的小空洞会不会变少 / 跨度会不会收窄。
  */
-function chooseLeatherCell(state, playerIndex) {
-  const board = state.players[playerIndex].board;
+function chooseLeatherCell(state, playerIndex, level) {
+  const player = state.players[playerIndex];
+  const board = player.board;
   let best = { row: 0, col: 0 };
   let bestScore = -Infinity;
   for (let r = 0; r < BOARD_SIZE; r += 1) {
@@ -129,11 +580,52 @@ function chooseLeatherCell(state, playerIndex) {
       }).length;
       // 空格子填上一个能立刻消掉的，比什么都强
       let s = (free === 0 ? 12 : 0) + (4 - free) * 1.6;
-      s += Math.random() * 0.4;
+
+      if (level === 'hard') {
+        // 在副本上放下这枚皮革，看结构变化
+        const board2 = cloneBoard(board);
+        board2[r][c] = { id: 'h' };
+        const fragDelta = holeFragmentation(board2) - holeFragmentation(board);
+        const spanDelta = spanOf(board2) - spanOf(board);
+        s -= fragDelta * 6;
+        s -= spanDelta * 1.2;
+        s -= Math.random() * 0.001;   // 只做零头打破并列，不吃掉主判据
+      } else {
+        s += Math.random() * 0.4;
+      }
       if (s > bestScore) { bestScore = s; best = { row: r, col: c }; }
     }
   }
   return best;
 }
 
-module.exports = { chooseAction, chooseLeatherCell, scoreBuy, scoreAdvance, deadCells };
+/** 合法难度值；`normalizeLevel` 把任何输入收敛到这三档之一（默认 normal） */
+const LEVELS = ['easy', 'normal', 'hard'];
+
+/** 把外部传来的难度字符串收成合法值；认不出来的一律当 normal */
+function normalizeLevel(level) {
+  return LEVELS.includes(level) ? level : 'normal';
+}
+
+/** 电脑对手在界面上显示的名字（按难度加后缀，困难档加「·高手」） */
+function botName(level) {
+  const lv = normalizeLevel(level);
+  if (lv === 'hard') return 'wzzzhhhhh·高手';
+  if (lv === 'easy') return 'wzzzhhhhh·轻松';
+  return 'wzzzhhhhh';
+}
+
+module.exports = {
+  chooseAction,
+  chooseLeatherCell,
+  scoreBuy: scoreBuyNormal,
+  scoreBuyHard,
+  scoreAdvance,
+  scoreAdvanceHard,
+  deadCells,
+  holeFragmentation,
+  sharedEdges,
+  normalizeLevel,
+  botName,
+  LEVELS,
+};

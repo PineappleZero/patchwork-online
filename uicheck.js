@@ -144,6 +144,9 @@ function ok(cond, label, extra) {
         menuRules: document.querySelectorAll('.menu-rule').length,
         rulesBtnStrong: !!q('#btnRulesMenu').classList.contains('primary'),
         counts: Array.from(document.querySelectorAll('#playerCount option')).map((o) => o.value),
+        // v1.6.6：单机难度多了「困难」档
+        botLevels: Array.from(document.querySelectorAll('#botLevel option')).map((o) => o.value),
+        botLevelLabels: Array.from(document.querySelectorAll('#botLevel option')).map((o) => o.textContent),
         /* v1.6.1：金调归经典版、魔改版退回中性灰。
            取的是实际算出来的样式，不是 class 在不在 —— 免得 CSS 写错还判通过。 */
         cardColors: (() => {
@@ -187,6 +190,11 @@ function ok(cond, label, extra) {
     ok(menu.menuRules === 3, '主菜单用 3 条粗线把分区切开', '实际 ' + menu.menuRules);
     ok(menu.rulesBtnStrong, '「规则与图例」在主菜单底部且被强调（不再是 .tiny）');
     ok(menu.counts.join(',') === '2,3,4,5,6', '人数可选 2~6', menu.counts.join(','));
+    // v1.6.6：难度三档，且含新增的 hard
+    ok(menu.botLevels.join(',') === 'normal,hard,easy',
+      '难度可选 普通/困难/轻松（v1.6.6 新增 hard）', menu.botLevels.join(','));
+    ok(/困难/.test(menu.botLevelLabels.join('')), '困难档有中文标签',
+      menu.botLevelLabels.join(' / '));
     ok(menu.visible, '菜单整卡在视口内', `高 ${menu.h} / 视口 ${menu.vh}`);
 
     /* ---------- v1.6.1：金调归经典版、魔改版退回中性灰 ---------- */
@@ -866,9 +874,9 @@ function ok(cond, label, extra) {
     })()`);
     ok(cl.show, '更新日志弹层能打开');
     ok(cl.vers >= 3, '包含 3 个及以上版本', '实际 ' + cl.vers);
-    ok(cl.first.indexOf('v1.6.5') === 0, '首条是 v1.6.5', cl.first);
-    ok(cl.items >= 4, 'v1.6.5 条目不少于 4 条（手机开 frame 那几项）', '实际 ' + cl.items);
-    ok(cl.versions.slice(0, 10).join(',') === 'v1.6.5,v1.6.4,v1.6.3,v1.6.2,v1.6.1,v1.6,v1.5.1,v1.5,v1.4.1,v1.4',
+    ok(cl.first.indexOf('v1.6.6') === 0, '首条是 v1.6.6', cl.first);
+    ok(cl.items >= 4, 'v1.6.6 条目不少于 4 条（困难人机那几项）', '实际 ' + cl.items);
+    ok(cl.versions.slice(0, 11).join(',') === 'v1.6.6,v1.6.5,v1.6.4,v1.6.3,v1.6.2,v1.6.1,v1.6,v1.5.1,v1.5,v1.4.1,v1.4',
       '版本号是连续的（含补记的 1.1）', cl.versions.join(' / '));
     await screenshot(ws, 'v165-4-changelog.png');
 

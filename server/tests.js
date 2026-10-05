@@ -421,7 +421,7 @@ function playAiGame(n, level, variant) {
     moves += 1;
     const seat = engine.currentPlayerIndex(state);
     if (state.pendingLeather.length) {
-      const cell = ai.chooseLeatherCell(state, seat);
+      const cell = ai.chooseLeatherCell(state, seat, level);
       engine.placeLeather(state, seat, cell.row, cell.col);
     } else {
       const a = ai.chooseAction(state, seat, level);
@@ -450,6 +450,63 @@ function playAiGame(n, level, variant) {
 });
 const easy = playAiGame(2, 'easy');
 check('轻松难度也能正常打完', easy.over && easy.moves < 1500);
+
+/* v1.6.6：困难难度 —— 会打完、会买牌，而且**明显强于普通** */
+console.log('\n[21b] 困难难度（v1.6.6）');
+
+check('normalizeLevel 认 hard', ai.normalizeLevel('hard') === 'hard');
+check('normalizeLevel 把野字符串收敛成 normal', ai.normalizeLevel('xxx') === 'normal');
+check('困难档的电脑名字带「高手」', ai.botName('hard').includes('高手') && ai.botName('hard') !== ai.botName('normal'));
+
+const hard = playAiGame(2, 'hard');
+check(`困难难度能自己打完（${hard.moves} 手）`, hard.over && hard.moves < 1500);
+check(`困难难度确实在买补丁（共 ${hard.placedTotal} 块）`, hard.placedTotal > 6);
+check(`困难难度把板子拼得不错（最多空 ${hard.maxEmpty} 格）`, hard.maxEmpty < 55);
+
+/** 对拉：seat 交替，统计 A 相对 B 的胜率 */
+function duel(levelA, levelB, N) {
+  let aw = 0; let bw = 0; let d = 0; let aSum = 0; let bSum = 0;
+  for (let i = 0; i < N; i += 1) {
+    const aSeat = i % 2 === 0 ? 0 : 1;
+    const lv = aSeat === 0 ? [levelA, levelB] : [levelB, levelA];
+    const st = engine.createGame(
+      [{ name: 'A', bot: true }, { name: 'B', bot: true }], Math.random, { variant: 'classic' },
+    );
+    let moves = 0;
+    while (!engine.isGameOver(st) && moves < 2000) {
+      moves += 1;
+      const seat = engine.currentPlayerIndex(st);
+      if (st.pendingLeather.length) {
+        const c = ai.chooseLeatherCell(st, seat, lv[seat]);
+        engine.placeLeather(st, seat, c.row, c.col);
+      } else {
+        const a = ai.chooseAction(st, seat, lv[seat]);
+        if (!a) break;
+        if (a.type === 'advance') engine.advance(st, seat);
+        else engine.buyPatch(st, seat, a.patchId, a.oriIndex, a.row, a.col);
+      }
+    }
+    const res = engine.finalResult(st);
+    const aTot = res.scores[aSeat].total;
+    const bTot = res.scores[1 - aSeat].total;
+    aSum += aTot; bSum += bTot;
+    if (res.winner === null) d += 1;
+    else if (res.winner === aSeat) aw += 1;
+    else bw += 1;
+  }
+  return { aw, bw, d, aAvg: aSum / N, bAvg: bSum / N, wr: aw / N };
+}
+
+// 40 局够看出趋势，又不至于把测试拖太久（hard 单步 ~30ms，一局约 1.4s）
+const duelEasy = duel('hard', 'easy', 40);
+check(`困难对轻松胜率过半（${duelEasy.aw}/40，均分 ${duelEasy.aAvg.toFixed(1)} : ${duelEasy.bAvg.toFixed(1)}）`,
+  duelEasy.aw > duelEasy.bw);
+
+const duelNormal = duel('hard', 'normal', 40);
+check(`困难对普通胜率过半（${duelNormal.aw}/40，均分 ${duelNormal.aAvg.toFixed(1)} : ${duelNormal.bAvg.toFixed(1)}）`,
+  duelNormal.aw > duelNormal.bw);
+check(`困难对普通的平均分更高（${duelNormal.aAvg.toFixed(1)} : ${duelNormal.bAvg.toFixed(1)}）`,
+  duelNormal.aAvg > duelNormal.bAvg);
 
 /* ------------------------------------------------------------------ */
 /* v1.5 魔改版                                                        */

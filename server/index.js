@@ -225,7 +225,7 @@ function createRoom(opts) {
     playerNames: [],
     localNames: [],
     botSeats: new Set(def.botSeats),
-    botLevel: opts.level === 'easy' ? 'easy' : 'normal',
+    botLevel: ai.normalizeLevel(opts.level),
     botTimer: null,
     rematchVotes: new Set(),
     history: [], // 对局事件流水，供中途加入的人回看
@@ -251,7 +251,7 @@ function startGame(room) {
   const list = [];
   for (let i = 0; i < room.capacity; i += 1) {
     if (room.botSeats.has(i)) {
-      list.push({ name: room.botLevel === 'easy' ? 'wzzzhhhhh·轻松' : 'wzzzhhhhh', bot: true });
+      list.push({ name: ai.botName(room.botLevel), bot: true });
     } else if (room.local) {
       list.push({ name: cleanName(i === 0 ? room.localNames[0] : room.localNames[i], `玩家${i + 1}`) });
     } else {
@@ -456,7 +456,7 @@ function runBot(room) {
   try {
     let events = [];
     if (st.pendingLeather.length) {
-      const cell = ai.chooseLeatherCell(st, seat);
+      const cell = ai.chooseLeatherCell(st, seat, room.botLevel);
       engine.placeLeather(st, seat, cell.row, cell.col);
       events = [{ type: 'leatherPlaced', row: cell.row, col: cell.col, player: seat }];
     } else {
