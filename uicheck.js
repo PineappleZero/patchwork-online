@@ -217,7 +217,7 @@ function ok(cond, label, extra) {
          · 触控目标够不够 44px
          · 对局的补丁环滚不滚得到（v1.6.2 前是 grid auto 行把它压没的）
        iframe 必须同源才能读 contentDocument —— 所以由页面自己造，src 用 /。 */
-    console.log('\n[1e] 手机适配（v1.6.2 起，v1.6.3 补 frame 布局）');
+    console.log('\n[1e] 手机适配（v1.6.2 起，v1.6.3 补 frame 布局，v1.6.4 补环几何）');
     {
       const mob = await evaluate(ws, `(async function(){
         const wrap = document.createElement('div');
@@ -266,6 +266,25 @@ function ok(cond, label, extra) {
            359×696 的竖条，33 块补丁绕它一圈直接顶到屏幕两边（用户说的「错位」）。 */
         const frameOn = !!(bw && bw.classList.contains('layout-frame'));
         const switchHidden = !q('#layoutSwitch') || q('#layoutSwitch').hidden;
+        /* v1.6.4：环的几何 + 操作条可达。
+           · 环必须是正圆：JS 从 .ring-guide 反算半径，guide 宽=高才是正圆
+           · 环的直径要撑到容器宽度（v1.6.4 前写死 236px，只用掉 341 里的 69%，
+             弧长不够 → 远处补丁被缩成 3px 碎点，看着就是「错位」）
+           · 操作条（旋转/镜像）必须在首屏内，不该逼用户往下滑 */
+        const guide = q('.ring-guide');
+        const ringGuideW = guide ? Math.round(guide.offsetWidth) : 0;
+        const ringGuideH = guide ? Math.round(guide.offsetHeight) : 0;
+        const panelR = rectOf('.ring-panel');
+        const abR = rectOf('.actionbar');
+        const rotateR = rectOf('#btnRotate');
+        // 环上补丁大小差异（同一环上不该差出一个数量级）
+        let chipMin = Infinity, chipMax = 0;
+        d.querySelectorAll('.ring-chip').forEach((el) => {
+          const r = el.getBoundingClientRect();
+          if (r.width <= 0) return;
+          if (r.width < chipMin) chipMin = r.width;
+          if (r.width > chipMax) chipMax = r.width;
+        });
         let patchMinL = Infinity, patchMaxR = -Infinity, patchN = 0;
         d.querySelectorAll('.board-wrap .patch-slot, .board-wrap .ring-patch, .board-wrap .cell-patch').forEach((el) => {
           const r = el.getBoundingClientRect();
@@ -295,6 +314,12 @@ function ok(cond, label, extra) {
           frameOn, switchHidden,
           patchN,
           patchSpan: patchN ? [Math.round(patchMinL), Math.round(patchMaxR)] : null,
+          ringGuideW, ringGuideH,
+          ringPanel: panelR && { t: Math.round(panelR.t), b: Math.round(panelR.b) },
+          actionbarTop: abR && Math.round(abR.t),
+          rotateTop: rotateR && Math.round(rotateR.t),
+          chipMin: chipMin === Infinity ? 0 : Math.round(chipMin),
+          chipMax: Math.round(chipMax),
         };
       })()`);
 
@@ -325,6 +350,20 @@ function ok(cond, label, extra) {
       ok(mob.patchSpan === null || (mob.patchSpan[0] >= -1 && mob.patchSpan[1] <= mob.vw + 1),
         '补丁横向都在视口内',
         mob.patchSpan ? `补丁 ${mob.patchSpan[0]}~${mob.patchSpan[1]}，视口 0~${mob.vw}（共 ${mob.patchN} 块）` : '对局早期还没补丁');
+      ok(mob.ringGuideW > 0 && mob.ringGuideW === mob.ringGuideH,
+        '补丁环是正圆（.ring-guide 宽高相等）',
+        `guide ${mob.ringGuideW}×${mob.ringGuideH}`);
+      ok(mob.ringGuideW >= 300,
+        '手机上的环要撑到容器宽度（v1.6.4 前写死 236px，只用掉 69% 宽度 → 补丁缩成碎点）',
+        `环直径 ${mob.ringGuideW}px`);
+      ok(mob.chipMin === 0 || mob.chipMin >= 3,
+        '环上最小的补丁不能缩成一个点（v1.6.4 前是 2.2px 基准、实测 3px）',
+        mob.chipMin ? `最小 ${mob.chipMin}px / 最大 ${mob.chipMax}px` : '还没补丁');
+      ok(mob.rotateTop > 0 && mob.rotateTop < mob.vh,
+        '「旋转」按钮在首屏内（不该逼用户往下滑才够得着）',
+        mob.rotateTop ? `btnRotate top=${mob.rotateTop}，视口高=${mob.vh}` : '按钮缺失');
+      ok(mob.actionbarTop > 0 && mob.actionbarTop < mob.vh,
+        '底部操作条在首屏内', `actionbar top=${mob.actionbarTop}`);
     }
 
     const net = await evaluate(ws, `(function(){
@@ -812,11 +851,11 @@ function ok(cond, label, extra) {
     })()`);
     ok(cl.show, '更新日志弹层能打开');
     ok(cl.vers >= 3, '包含 3 个及以上版本', '实际 ' + cl.vers);
-    ok(cl.first.indexOf('v1.6.3') === 0, '首条是 v1.6.3', cl.first);
-    ok(cl.items >= 3, 'v1.6.3 条目不少于 3 条（手机错位那修）', '实际 ' + cl.items);
-    ok(cl.versions.slice(0, 8).join(',') === 'v1.6.3,v1.6.2,v1.6.1,v1.6,v1.5.1,v1.5,v1.4.1,v1.4',
+    ok(cl.first.indexOf('v1.6.4') === 0, '首条是 v1.6.4', cl.first);
+    ok(cl.items >= 4, 'v1.6.4 条目不少于 4 条（手机环那几修）', '实际 ' + cl.items);
+    ok(cl.versions.slice(0, 9).join(',') === 'v1.6.4,v1.6.3,v1.6.2,v1.6.1,v1.6,v1.5.1,v1.5,v1.4.1,v1.4',
       '版本号是连续的（含补记的 1.1）', cl.versions.join(' / '));
-    await screenshot(ws, 'v163-4-changelog.png');
+    await screenshot(ws, 'v164-4-changelog.png');
 
     console.log('\n[4b] 音效开关：每个界面都能开关');
     await evaluate(ws, `document.getElementById('btnChangelogClose').click()`);

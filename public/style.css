@@ -1767,8 +1767,11 @@ kbd {
     -webkit-overflow-scrolling: touch;
     padding: 8px;
     gap: 8px;
-    /* 底部手势条 */
-    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+    /* v1.6.4：底部要多留出「操作条 + 手势条」那么高。
+       操作条是文档流里的兄弟元素（flex:none，约 137px），不遮内容，
+       但滚到底时环的最后一行补丁会紧贴操作条上沿 —— 留白不够就会觉得
+       「要一直往下滑才够得着旋转/镜像」。给足留白，滚到底正好停在环下沿。 */
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
   }
   .players,
   .center {
@@ -1781,9 +1784,19 @@ kbd {
   /* 中央栏：补丁环 + 时间板整体缩到手机宽度内 */
   .center { width: 100%; order: 2; min-width: 0; }
   .ring-panel { padding: 8px; }
+  /* v1.6.4：环直径要**跟着可用宽度走**，不能写死 236px。
+     写死时环只用掉 341px 里的 236px（69%），周长 741px 要摊 30~33 块补丁，
+     每块只剩 ~23px 弧长 → JS 的透视缩放把远处的缩到 3px，看着就是「一堆碎屑散在环上」。
+     现在让它撑到容器宽度（- 2×面板内边距），弧长变长、补丁更大更匀。
+     .ring-stage 高度由 calc(--ring-d + 40px) 自动跟随，正圆不会变形。 */
+  .ring-panel { --mob-ring: min(341px, calc(100vw - 32px)); }
   .ring-stage {
-    --ring-d: 236px;
-    --tb-cell: 17px;
+    --ring-d: var(--mob-ring);
+    /* 时间板 9 列要装进环心，跟着环一起缩。
+       桌面基准是 336 / 25 = 13.44，但那是**桌面**的比例 —— 手机上环里
+       还要塞得下骑在圆周上的补丁，时间板再小一档才不顶到环。
+       取 15.2：390px 宽时格子约 22.4px，时间板 202px，环心刚好留出呼吸。 */
+    --tb-cell: calc(var(--mob-ring) / 15.2);
     max-width: 100%;
   }
   .ring-front .patch-shape { height: 42px; }
@@ -1797,11 +1810,11 @@ kbd {
   .layout-switch { display: none; }
 
   /* 拼布板本身缩到屏幕内。
-     手机上一块 320px 的板子就有 331px 高，两块叠起来 824px ——
-     可视区只有 ~596px，怎么看得到补丁环？用 clamp 按视口打分：
-     390px 宽时约 176px（9×9 格每格 ~19px，指甲盖大小，点得中）。 */
+     v1.6.4：手机上环（341px 直径）才是主操作区，拼布板再收一档把高度让给它 ——
+     原来 46vw 时两块板并排占 216px，环被挤到首屏外、操作条更是摸不到。
+     现在 34vw：390px 宽时约 133px，9×9 每格 ~14px（点得中，且看得清针脚）。 */
   .quilt {
-    max-width: min(100%, clamp(150px, 46vw, 240px));
+    max-width: min(100%, clamp(120px, 34vw, 200px));
     margin: 0 auto;
   }
   /* 两块板在手机上**左右并排**，比竖着叠省一半高度 */
@@ -1865,7 +1878,11 @@ kbd {
     max-width: 100%;
     min-width: 0;
   }
-  .menu-card, .mode-card, .player-card, .quilt {
+  /* ⚠️ 这里**不要**再包含 .quilt —— v1.6.2 把它写进来当兜底，
+     结果它排在「拼布板缩一档」那条规则后面、特异性一样，直接把
+     max-width: clamp(120px,34vw,200px) 冲成 100%，缩小的意图全失效
+     （v1.6.4 排查了半天才逮到）。.quilt 有自己的专用规则，够用了。 */
+  .menu-card, .mode-card, .player-card {
     max-width: 100%;
     min-width: 0;
   }
