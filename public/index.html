@@ -43,16 +43,17 @@
 
     <div class="menu-rule" aria-hidden="true"></div>
 
-    <!-- 单机与联机左右并排；每块里经典版在上、魔改版在下，用一条小分隔带隔开 -->
+    <!-- 单机与联机左右并排；每块里经典版在上、魔改版在下，用一条小分隔带隔开。
+         v1.6.1：金调（classic）给经典版，魔改版退回中性灰 —— 让第一眼落在上方的经典版上。 -->
     <div class="menu-grid">
 
       <div class="menu-sec">
         <div class="sec-title">单机 · 不用等人，点开就玩</div>
-        <button id="btnSolo" class="mode-card" data-mode="solo" data-variant="classic">
+        <button id="btnSolo" class="mode-card classic" data-mode="solo" data-variant="classic">
           <b>人机对战</b>
           <small>经典规则，和 wzzzhhhhh 下一局</small>
         </button>
-        <button id="btnLocal" class="mode-card" data-mode="local" data-variant="classic">
+        <button id="btnLocal" class="mode-card classic" data-mode="local" data-variant="classic">
           <b>同机双人</b>
           <small>一台设备，两人轮流操作</small>
         </button>
@@ -89,7 +90,7 @@
           <span>人数</span>
           <select id="playerCount"></select>
         </div>
-        <button id="btnCreate" class="mode-card" data-mode="online" data-variant="classic">
+        <button id="btnCreate" class="mode-card classic" data-mode="online" data-variant="classic">
           <b>创建房间 · 经典版</b>
           <small>原版规则，坐满自动开局</small>
         </button>

@@ -242,7 +242,9 @@ html, body {
   padding-left: 22px;
 }
 
-/* 「魔改版」分组的小标题带 */
+/* 「魔改版」分组的小标题带。
+   v1.6.1 起这块牌改成中性灰 —— 原来它是紫的，比下面所有入口都抢眼，
+   第一眼全落在魔改版上，经典版反而像个附庸。现在只有经典版带金。 */
 .variant-head {
   display: flex;
   align-items: center;
@@ -261,8 +263,9 @@ html, body {
   font-size: 10.5px;
   font-weight: 700;
   letter-spacing: .08em;
-  color: #1a1226;
-  background: linear-gradient(120deg, #d59cf0, #8f6fd0);
+  color: var(--text-dim);
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
   border-radius: 999px;
   padding: 2px 8px;
 }
@@ -278,16 +281,34 @@ html, body {
   color: var(--text-faint);
 }
 
-/* 魔改版的入口用紫调，跟经典版的金调一眼分得开 */
+/*
+ * 经典版 = 金调，魔改版 = 中性灰（v1.6.1 对调过来的）。
+ *
+ * 改之前是反的：魔改版紫底紫边、标题也是浅紫，经典版却和普通卡片一样是灰的。
+ * 结果就是「第一眼看到的是魔改版」—— 而经典版才是主菜、又排在前面。
+ * 现在把重量压在经典版上：金底 + 金边 + 金字，魔改版退回普通卡片的灰。
+ */
+.mode-card.classic {
+  background: linear-gradient(150deg, #2b2418, #1b1e29 62%);
+  border-color: var(--gold-dim);
+}
+.mode-card.classic:hover {
+  border-color: var(--gold);
+  background: linear-gradient(150deg, #342b1c, #202531 62%);
+}
+.mode-card.classic b { color: var(--gold); }
+
+/* 魔改版：不加任何颜色，跟普通卡片一样 —— 但留一点点区隔感，
+   免得它跟上面的经典版糊成一片（细一档的边框 + 稍暗的底）。 */
 .mode-card.chaos {
-  background: linear-gradient(150deg, #251d36, #1b2030 62%);
-  border-color: #4b3a6b;
+  background: var(--bg-soft);
+  border-color: var(--line-soft);
 }
 .mode-card.chaos:hover {
-  border-color: #8f6fd0;
-  background: linear-gradient(150deg, #2d2442, #1f2537 62%);
+  border-color: var(--line);
+  background: #1d2230;
 }
-.mode-card.chaos b { color: #d9bdf0; }
+.mode-card.chaos b { color: var(--text); }
 
 
 .menu-sec {

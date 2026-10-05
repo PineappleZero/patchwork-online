@@ -144,6 +144,28 @@ function ok(cond, label, extra) {
         menuRules: document.querySelectorAll('.menu-rule').length,
         rulesBtnStrong: !!q('#btnRulesMenu').classList.contains('primary'),
         counts: Array.from(document.querySelectorAll('#playerCount option')).map((o) => o.value),
+        /* v1.6.1：金调归经典版、魔改版退回中性灰。
+           取的是实际算出来的样式，不是 class 在不在 —— 免得 CSS 写错还判通过。 */
+        cardColors: (() => {
+          const pick = (sel) => {
+            const el = document.querySelector(sel);
+            if (!el) return null;
+            const b = el.querySelector('b');
+            return {
+              border: getComputedStyle(el).borderTopColor,
+              bg: getComputedStyle(el).backgroundImage,
+              title: b ? getComputedStyle(b).color : '',
+            };
+          };
+          const tag = document.querySelector('.variant-head .vh-tag');
+          return {
+            classic: pick('.mode-card.classic[data-mode="solo"]'),
+            chaos: pick('.mode-card.chaos[data-mode="solo"]'),
+            classicCount: document.querySelectorAll('.mode-card.classic').length,
+            tagBg: tag ? getComputedStyle(tag).backgroundImage : '',
+            tagColor: tag ? getComputedStyle(tag).color : '',
+          };
+        })(),
         visible: rect.top >= -2 && rect.bottom <= window.innerHeight + 2,
         h: Math.round(rect.height), vh: window.innerHeight,
       };
@@ -166,6 +188,26 @@ function ok(cond, label, extra) {
     ok(menu.rulesBtnStrong, '「规则与图例」在主菜单底部且被强调（不再是 .tiny）');
     ok(menu.counts.join(',') === '2,3,4,5,6', '人数可选 2~6', menu.counts.join(','));
     ok(menu.visible, '菜单整卡在视口内', `高 ${menu.h} / 视口 ${menu.vh}`);
+
+    /* ---------- v1.6.1：金调归经典版、魔改版退回中性灰 ---------- */
+    console.log('\n[1d] 主菜单配色：经典版金、魔改版灰（v1.6.1）');
+    {
+      const c = menu.cardColors;
+      ok(c.classicCount === 3, '三张经典版卡片都带上了 classic 类', '实际 ' + c.classicCount);
+      ok(c.classic && /232,\s*181,\s*99/.test(c.classic.title),
+        '经典版标题是金色（--gold #e8b563）', c.classic && c.classic.title);
+      ok(c.classic && /166,\s*127,\s*60/.test(c.classic.border),
+        '经典版边框是暗金（--gold-dim #a67f3c）', c.classic && c.classic.border);
+      ok(c.chaos && !/232,\s*181,\s*99/.test(c.chaos.title),
+        '魔改版标题不是金色（不跟经典版抢）', c.chaos && c.chaos.title);
+      // 魔改版边框应该比经典版「淡」：原先那版是 #4b3a6b 的紫，现在该是 --line-soft
+      ok(c.chaos && !/75,\s*58,\s*107/.test(c.chaos.border),
+        '魔改版边框不是原来的紫色（#4b3a6b）', c.chaos && c.chaos.border);
+      ok(c.chaos && !/linear-gradient\(150deg,\s*rgb\(37,\s*29,\s*54\)/.test(c.chaos.bg || ''),
+        '魔改版没有紫底渐变，退回普通卡片', (c.chaos && c.chaos.bg || '').slice(0, 46));
+      ok(!/gradient/.test(c.tagBg || ''),
+        '「魔改版」分组小牌不再是紫色渐变填充', (c.tagBg || 'transparent').slice(0, 40));
+    }
 
     const net = await evaluate(ws, `(function(){
       const box = document.getElementById('netHint');
@@ -652,11 +694,11 @@ function ok(cond, label, extra) {
     })()`);
     ok(cl.show, '更新日志弹层能打开');
     ok(cl.vers >= 3, '包含 3 个及以上版本', '实际 ' + cl.vers);
-    ok(cl.first.indexOf('v1.6') === 0, '首条是 v1.6', cl.first);
-    ok(cl.items >= 4, 'v1.6 条目不少于 4 条', '实际 ' + cl.items);
-    ok(cl.versions.slice(0, 6).join(',') === 'v1.6,v1.5.1,v1.5,v1.4.1,v1.4,v1.3',
+    ok(cl.first.indexOf('v1.6.1') === 0, '首条是 v1.6.1', cl.first);
+    ok(cl.items >= 3, 'v1.6.1 条目不少于 3 条', '实际 ' + cl.items);
+    ok(cl.versions.slice(0, 7).join(',') === 'v1.6.1,v1.6,v1.5.1,v1.5,v1.4.1,v1.4,v1.3',
       '版本号是连续的（含补记的 1.1）', cl.versions.join(' / '));
-    await screenshot(ws, 'v160-4-changelog.png');
+    await screenshot(ws, 'v161-4-changelog.png');
 
     console.log('\n[4b] 音效开关：每个界面都能开关');
     await evaluate(ws, `document.getElementById('btnChangelogClose').click()`);
