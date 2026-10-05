@@ -7,6 +7,10 @@ yarn.lock
 shots/
 *.log
 
+# 静态单机版产物（一条命令就能重建：node build-static.js）
+# 里面只有 pw-stats.js / local-server.js 是手写的，改完记得同步回这里
+web/
+
 # 编辑器 / 系统
 .vscode/
 .idea/

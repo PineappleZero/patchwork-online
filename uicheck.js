@@ -1,7 +1,7 @@
 'use strict';
 
 /*
- * v1.5.1 界面联调：用 CDP 驱动本机 Edge，逐屏截图并断言关键布局。
+ * v1.6 界面联调：用 CDP 驱动本机 Edge，逐屏截图并断言关键布局。
  * 覆盖：主菜单（布片标题 + 拼布带 + 粗分隔线 + 左右并排 + 联机网址）/
  *       规则弹层按版本分开显示（主菜单看全套、对局里只看当前这一版）/
  *       音效开关 / 人机对战 / 双人默认「绕拼布板」的放大轨道与中立棋子 /
@@ -652,11 +652,11 @@ function ok(cond, label, extra) {
     })()`);
     ok(cl.show, '更新日志弹层能打开');
     ok(cl.vers >= 3, '包含 3 个及以上版本', '实际 ' + cl.vers);
-    ok(cl.first.indexOf('v1.5.1') === 0, '首条是 v1.5.1', cl.first);
-    ok(cl.items >= 4, 'v1.5.1 条目不少于 4 条', '实际 ' + cl.items);
-    ok(cl.versions.slice(0, 5).join(',') === 'v1.5.1,v1.5,v1.4.1,v1.4,v1.3',
+    ok(cl.first.indexOf('v1.6') === 0, '首条是 v1.6', cl.first);
+    ok(cl.items >= 4, 'v1.6 条目不少于 4 条', '实际 ' + cl.items);
+    ok(cl.versions.slice(0, 6).join(',') === 'v1.6,v1.5.1,v1.5,v1.4.1,v1.4,v1.3',
       '版本号是连续的（含补记的 1.1）', cl.versions.join(' / '));
-    await screenshot(ws, 'v151-4-changelog.png');
+    await screenshot(ws, 'v160-4-changelog.png');
 
     console.log('\n[4b] 音效开关：每个界面都能开关');
     await evaluate(ws, `document.getElementById('btnChangelogClose').click()`);

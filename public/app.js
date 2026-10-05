@@ -133,6 +133,12 @@ function setSfx(on, remember) {
 /* ---------------- 全局状态 ---------------- */
 const S = {
   ws: null,
+  // 规则数值（补丁表、时间板、变体参数）。静态版下**在脚本加载的时候就同步填好**，
+  // 不等 boot()：否则用户手快、在 boot 跑完前就点了「人机对战」，
+  // render 会读到 null 的 meta 直接崩（踩过）。
+  meta: (typeof window !== 'undefined' && window.PW_LOCAL)
+    ? new window.PW_LOCAL.LocalServer().info()
+    : null,
   room: null,
   seat: -1,
   token: null,
@@ -185,7 +191,38 @@ function nameOf(seat) {
 }
 
 /* ---------------- 连接 ---------------- */
+
+/**
+ * 静态托管模式（GitHub Pages / Vercel 等纯前端托管）：
+ * 页面上没有服务端，于是把「服务端」放进同一个页面里跑（见 local-server.js）。
+ * 判据不是「有没有 localhost」，而是**页面上有没有那个本地服务端** ——
+ * 本地起 node 服务时不会加载 local-server.js，所以自动走真 WebSocket，行为完全不变。
+ */
+const PW_STATIC = typeof window !== 'undefined' && !!window.PW_LOCAL;
+
+/** 静态版里把联机相关的入口藏掉（没有服务端就没有房间） */
+function applyStaticMode() {
+  if (!PW_STATIC) return;
+  document.documentElement.classList.add('pw-static');
+  const onlineCol = document.querySelector('.online-col, [data-col="online"]');
+  if (onlineCol) onlineCol.hidden = true;
+  // 兜底：按文案找联机相关的按钮/区块，找不到也无所谓
+  Array.from(document.querySelectorAll('.mode-card, .menu-col')).forEach((el) => {
+    if (/创建房间|加入房间/.test(el.textContent || '')) el.hidden = true;
+  });
+}
+
 function connect(handshake, onOpen) {
+  if (PW_STATIC) {
+    // 本地服务端：同页函数调用，没有网络，也就不会有断线
+    const server = new window.PW_LOCAL.LocalServer();
+    S.localServer = server;
+    server.onmessage = (msg) => handleServerMessage(msg);
+    const ws = server.connect({ onopen: onOpen });
+    S.ws = ws;
+    return ws;
+  }
+
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}`);
   S.ws = ws;
@@ -208,7 +245,11 @@ function connect(handshake, onOpen) {
 }
 
 function send(payload) {
-  if (S.ws && S.ws.readyState === WebSocket.OPEN) S.ws.send(JSON.stringify(payload));
+  if (!S.ws) return;
+  // 静态版：本地服务端的 readyState 恒为 1（打开）
+  if (S.ws.readyState === 1 || S.ws.readyState === WebSocket.OPEN) {
+    S.ws.send(JSON.stringify(payload));
+  }
 }
 
 function setMenuMsg(text, ok) {
@@ -219,6 +260,7 @@ function setMenuMsg(text, ok) {
 
 /* ---------------- 服务端消息 ---------------- */
 function handleServerMessage(msg) {
+  maybeCountGame(msg);
   if (msg.type === 'joined') {
     S.room = msg.room;
     S.seat = msg.seat;
@@ -1647,8 +1689,19 @@ function escapeHtml(s) {
 /* ---------------- 更新日志 ---------------- */
 const CHANGELOG = [
   {
-    v: 'v1.5.1',
+    v: 'v1.6',
     date: '当前',
+    items: [
+      '<b>单机版能看到「有多少人玩过」了</b>：主菜单底部多一枚小胶囊 —— <b>N 次访问 · M 局已开</b>。数字来自云服务，是全世界所有玩过这个链接的人加起来的，不是你自己本地的记录。',
+      '「访问」按<b>会话</b>算：同一个标签页里按 F5 刷新不会重复计数，关掉重开才算新的一次。',
+      '「开局」按<b>局</b>算：人机对战、同机双人、魔改版、以及结束后的「再来一局」，每开一局记一次；一局里走多少步都只算这一局。',
+      '<b>统计坏了不影响玩</b>：断网、加载失败、云端异常，一律静默跳过 —— 面板不显示，游戏该怎么玩怎么玩。',
+      '联机版不受影响：统计只在单机版里跑。',
+    ],
+  },
+  {
+    v: 'v1.5.1',
+    date: '上一版',
     items: [
       '<b>规则按版本分开显示</b>：从<b>主菜单</b>点「规则与图例」，看到的是完整的 —— <b>经典规则全部排在前</b>，魔改版单独一节压在最后。进对局后再点「规则」，就<b>只显示这一局用的那一套</b>：经典局看不到混沌格那节，魔改局才看得到，标题右边还会挂一枚「魔改版」小标签。',
       '两套规则不一致的地方（得分公式、7×7 奖励、前方能看到几块、环上多少块补丁）现在会<b>跟着版本自动换</b>，不再是一句「魔改版把这条改成了…」的补充说明。两套一起看时，每处差异前面会标上它属于哪一版。',
@@ -1810,6 +1863,30 @@ $('playerName').addEventListener('keydown', (e) => {
 });
 
 $('btnStart').onclick = () => send({ type: 'start' });
+
+/**
+ * 静态单机版的「开局数」计数点。
+ *
+ * 判据是 `state.gameSeq`（本地服务端每开一局自增一次，见 local-server.js 的
+ * start()）的**单调递增**。这是唯一可靠的信号：
+ *   · 不能挂按钮 —— 开局路径有「人机对战」（一点即开局）、「开始游戏」、
+ *     以及「再来一局」（rematch）三条，挂按钮必漏；
+ *   · 不能看消息类型 `started` —— 服务端从不单独发这种消息，它只是 state
+ *     上的布尔字段；
+ *   · 不能只看 `started === true` —— rematch 之后它仍然是 true，
+ *     区分不出「还在同一局」和「又开了一局」。
+ * gameSeq 每局都新建，所以「比上次大」就等于「开了新的一局」，一次不多一次不少。
+ */
+let _lastGameSeq = 0;
+function maybeCountGame(msg) {
+  if (!PW_STATIC || !window.PW_STATS) return;
+  if (!msg || msg.type !== 'state') return;
+  const seq = Number(msg.gameSeq) || 0;
+  if (seq > _lastGameSeq) {
+    _lastGameSeq = seq;
+    try { window.PW_STATS.countGame(); } catch (e) { /* 统计不能影响游戏 */ }
+  }
+}
 
 function leaveToMenu() {
   try { localStorage.removeItem('pwSeat'); } catch (e) { /* 忽略 */ }
@@ -2026,6 +2103,10 @@ window.__pw = {
     const q = document.querySelector(`.player-card[data-seat="${seat}"] .quilt`);
     return q ? Array.from(q.children) : [];
   },
+  /** 静态单机版的访问量/开局数统计状态（联机版为 null） */
+  get stats() { return (PW_STATIC && window.PW_STATS) ? window.PW_STATS._s : null; },
+  /** 静态单机版的同页服务端（联机版为 null）—— 供测试直接驱动 rematch 等 */
+  get localServer() { return S.localServer || null; },
 };
 
 /* ---------------- 启动 ---------------- */
@@ -2060,11 +2141,23 @@ async function boot() {
   renderChangelog();
   renderVariantHints();
 
-  const res = await fetch('/api/info');
-  S.meta = await res.json();
+  if (PW_STATIC) {
+    // 静态版没有 /api/info 这个接口，规则数值在脚本加载时已经从本地服务端取好
+    // （见上面 S.meta 的初始化），这里只补做界面调整。
+    if (!S.meta) S.meta = new window.PW_LOCAL.LocalServer().info();
+    applyStaticMode();
+  } else {
+    const res = await fetch('/api/info');
+    S.meta = await res.json();
+  }
   renderNetHint();
   renderVariantHints();
   autoJoinIfRequested();
+
+  // 访问量统计（仅静态单机版；模块不存在时静默跳过）
+  if (PW_STATIC && window.PW_STATS) {
+    try { window.PW_STATS.boot(); } catch (e) { /* 统计不能影响游戏 */ }
+  }
 }
 
 /**
@@ -2110,6 +2203,9 @@ function renderNetHint() {
 
 /** 支持 ?join=房间码&name=名字 直接进房；刷新页面也能凭 token 回到原位 */
 function autoJoinIfRequested() {
+  // 静态版没有房间可进，直接跳过（免得跑去找一个不存在的服务端）
+  if (PW_STATIC) return;
+
   const params = new URLSearchParams(location.search);
   let room = (params.get('join') || '').toUpperCase();
   let token = null;
