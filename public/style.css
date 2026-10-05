@@ -1796,8 +1796,22 @@ kbd {
   /* 布局切换开关在手机上藏掉（只有双人局会出现，且框摆不下） */
   .layout-switch { display: none; }
 
-  /* 拼布板本身缩到屏幕内 */
-  .quilt { max-width: 100%; }
+  /* 拼布板本身缩到屏幕内。
+     手机上一块 320px 的板子就有 331px 高，两块叠起来 824px ——
+     可视区只有 ~596px，怎么看得到补丁环？用 clamp 按视口打分：
+     390px 宽时约 176px（9×9 格每格 ~19px，指甲盖大小，点得中）。 */
+  .quilt {
+    max-width: min(100%, clamp(150px, 46vw, 240px));
+    margin: 0 auto;
+  }
+  /* 两块板在手机上**左右并排**，比竖着叠省一半高度 */
+  .board-wrap[data-n="2"] .players { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .board-wrap[data-n="2"] .players .player-card { max-width: 100%; }
+  /* 玩家卡自己也收一收（桌面 9px 10px 内边距 + 名字行挺占地方） */
+  .player-card { padding: 7px 8px 8px; }
+  .player-card .pc-head { margin-bottom: 5px; }
+  .player-card .pc-name { font-size: 12px; }
+  .player-card .pc-foot { font-size: 11px; margin-top: 4px; }
 
   /* 底部操作区（旋转/镜像/跳过/确认）横向排布，按钮等宽好点。
      注意 align-items:center —— flex 默认 stretch 会把这些按钮纵向撑满，

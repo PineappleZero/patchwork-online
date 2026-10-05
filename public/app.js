@@ -864,7 +864,14 @@ function renderRing() {
 
   // 环绕方式：「绕拼布板」只给双人局，人少了多了都退回「环绕时间板」
   const canSwitch = st.players.length === 2;
-  const wantFrame = canSwitch && S.layout === 'frame' && N > 0;
+  /* v1.6.3：手机上禁用「绕拼布板」。
+     这套布局靠 frameBand() 给 .players 留一圈 66~94px 的空带去塞补丁轨道，
+     而且要求两块拼布板**左右并排**（#frameStage 才是个方正的矩形）。
+     手机上 .players 只能单列纵向堆叠，于是 #frameStage 变成 359×696 的高瘦矩形，
+     33 块补丁绕着它排一圈就直接顶到屏幕两边 —— 就是用户看到的「错位」。
+     宽度不够时一律退回「环绕时间板」，那条路本来就能自适应缩放。 */
+  const narrow = typeof window !== 'undefined' && window.innerWidth <= 480;
+  const wantFrame = canSwitch && !narrow && S.layout === 'frame' && N > 0;
   const wrap = $('boardWrap');
   const players = $('playersWrap');
   // 顺序很要紧：先挂布局类（.players 的宽度当场就定死了，而且不随内边距变），
@@ -893,7 +900,8 @@ function renderRing() {
   }
   const sw = $('layoutSwitch');
   if (sw) {
-    sw.hidden = !canSwitch;
+    /* 手机上不给切（上面 narrow 那段解释了原因），开关索性藏掉 */
+    sw.hidden = !canSwitch || narrow;
     Array.from(sw.children).forEach((b) => {
       b.classList.toggle('on', b.dataset.layout === mode);
     });
@@ -1689,8 +1697,17 @@ function escapeHtml(s) {
 /* ---------------- 更新日志 ---------------- */
 const CHANGELOG = [
   {
-    v: 'v1.6.2',
+    v: 'v1.6.3',
     date: '当前',
+    items: [
+      '<b>手机上对局不再「错位」了</b>：真机上打开双人局，补丁会绕着拼布板排出去、顶到屏幕两边。原因是「绕拼布板」这套布局要求两块板<b>左右并排</b>，而手机只能上下叠 —— 那块区域被拉成一根又高又瘦的竖条，33 块补丁绕它一圈自然就豁出去了。',
+      '<b>窄屏自动换回「环绕时间板」</b>：手机上一律走那条能自适应缩放的路线，布局开关也一并收起来，不会再误切到不合适的模式。',
+      '<b>拼布板不再瘦成一条</b>：手机上的板子收小了一档、双人局两张卡<b>并排成一行</b>，玩家区高度从 824px 压到 216px —— 补丁环和时间板打开就在首屏。',
+    ],
+  },
+  {
+    v: 'v1.6.2',
+    date: '上一版',
     items: [
       '<b>手机上能好好玩了</b>：以前这个页面只在电脑上测过，手机打开是坏的 —— 整页能左右拖动、主菜单被截断、对局的补丁环滚不到、按钮小得点不准。这一版专门修了手机。',
       '<b>横向溢出没了</b>：顶栏那排按钮在窄屏会换行，底部操作条也改成两列，整页再也不会左右晃。',
@@ -1702,7 +1719,7 @@ const CHANGELOG = [
   },
   {
     v: 'v1.6.1',
-    date: '上一版',
+    date: '更早',
     items: [
       '<b>把颜色给对了人</b>：原来主菜单里<b>魔改版是紫的</b>（紫底紫边、标题也是浅紫），经典版却和普通卡片一样是灰的 —— 偏偏经典版排在前面、又是主菜，结果第一眼全落在魔改版上。现在<b>金调给了经典版</b>：人机对战、同机双人、创建房间·经典版三张卡都是金边金字；<b>魔改版退回中性灰</b>，不再抢戏。',
       '「<b>魔改版 · 混沌拼布</b>」那枚分组小牌也从紫色渐变改成了灰色描边，跟它的入口一样低调。',

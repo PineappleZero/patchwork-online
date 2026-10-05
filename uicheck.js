@@ -217,7 +217,7 @@ function ok(cond, label, extra) {
          · 触控目标够不够 44px
          · 对局的补丁环滚不滚得到（v1.6.2 前是 grid auto 行把它压没的）
        iframe 必须同源才能读 contentDocument —— 所以由页面自己造，src 用 /。 */
-    console.log('\n[1e] 手机适配（v1.6.2）');
+    console.log('\n[1e] 手机适配（v1.6.2 起，v1.6.3 补 frame 布局）');
     {
       const mob = await evaluate(ws, `(async function(){
         const wrap = document.createElement('div');
@@ -261,6 +261,19 @@ function ok(cond, label, extra) {
         const scrollable = bw ? bw.scrollHeight - bw.clientHeight : 0;
         const ringR = rectOf('.ring-panel');
         const quiltR = rectOf('.player-card .quilt');
+        /* v1.6.3：窄屏必须退回「环绕时间板」。
+           「绕拼布板」要求两块板左右并排，手机只能上下叠 —— 那块区域被拉成
+           359×696 的竖条，33 块补丁绕它一圈直接顶到屏幕两边（用户说的「错位」）。 */
+        const frameOn = !!(bw && bw.classList.contains('layout-frame'));
+        const switchHidden = !q('#layoutSwitch') || q('#layoutSwitch').hidden;
+        let patchMinL = Infinity, patchMaxR = -Infinity, patchN = 0;
+        d.querySelectorAll('.board-wrap .patch-slot, .board-wrap .ring-patch, .board-wrap .cell-patch').forEach((el) => {
+          const r = el.getBoundingClientRect();
+          if (r.width <= 0) return;
+          patchN++;
+          if (r.left < patchMinL) patchMinL = r.left;
+          if (r.right > patchMaxR) patchMaxR = r.right;
+        });
         const gSmall = [];
         d.querySelectorAll('#game button, #game select').forEach((el) => {
           const r = el.getBoundingClientRect();
@@ -279,6 +292,9 @@ function ok(cond, label, extra) {
           scrollable: Math.round(scrollable),
           ringTop: ringR && Math.round(ringR.t),
           quiltInView: !!(quiltR && quiltR.t >= 0),
+          frameOn, switchHidden,
+          patchN,
+          patchSpan: patchN ? [Math.round(patchMinL), Math.round(patchMaxR)] : null,
         };
       })()`);
 
@@ -304,6 +320,11 @@ function ok(cond, label, extra) {
       ok(mob.scrollable > 0, '对局内容超出时能纵向滚动（v1.6.2 前补丁环被 grid 压没、滚不到）',
         `可滚动 ${mob.scrollable}px`);
       ok(mob.quiltInView, '手机进对局能先看见自己的拼布板（不被顶出视口）');
+      ok(!mob.frameOn, '手机上不会切到「绕拼布板」（v1.6.3 前那块区域被拉成 696px 高的竖条，补丁顶到屏幕两边）');
+      ok(mob.switchHidden, '手机上看不到布局切换开关');
+      ok(mob.patchSpan === null || (mob.patchSpan[0] >= -1 && mob.patchSpan[1] <= mob.vw + 1),
+        '补丁横向都在视口内',
+        mob.patchSpan ? `补丁 ${mob.patchSpan[0]}~${mob.patchSpan[1]}，视口 0~${mob.vw}（共 ${mob.patchN} 块）` : '对局早期还没补丁');
     }
 
     const net = await evaluate(ws, `(function(){
@@ -791,11 +812,11 @@ function ok(cond, label, extra) {
     })()`);
     ok(cl.show, '更新日志弹层能打开');
     ok(cl.vers >= 3, '包含 3 个及以上版本', '实际 ' + cl.vers);
-    ok(cl.first.indexOf('v1.6.2') === 0, '首条是 v1.6.2', cl.first);
-    ok(cl.items >= 5, 'v1.6.2 条目不少于 5 条（手机适配那几项）', '实际 ' + cl.items);
-    ok(cl.versions.slice(0, 7).join(',') === 'v1.6.2,v1.6.1,v1.6,v1.5.1,v1.5,v1.4.1,v1.4',
+    ok(cl.first.indexOf('v1.6.3') === 0, '首条是 v1.6.3', cl.first);
+    ok(cl.items >= 3, 'v1.6.3 条目不少于 3 条（手机错位那修）', '实际 ' + cl.items);
+    ok(cl.versions.slice(0, 8).join(',') === 'v1.6.3,v1.6.2,v1.6.1,v1.6,v1.5.1,v1.5,v1.4.1,v1.4',
       '版本号是连续的（含补记的 1.1）', cl.versions.join(' / '));
-    await screenshot(ws, 'v162-4-changelog.png');
+    await screenshot(ws, 'v163-4-changelog.png');
 
     console.log('\n[4b] 音效开关：每个界面都能开关');
     await evaluate(ws, `document.getElementById('btnChangelogClose').click()`);
