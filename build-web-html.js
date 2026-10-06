@@ -1,7 +1,7 @@
 'use strict';
 
 /*
- * 生成静态托管版（单机版）页面：web/index.html
+ * 生成静态托管版（单机版）页面：site/index.html
  *
  * 做法：以 public/index.html 为模板，只做两件事：
  *   1) 在 app.js 之前插入两个脚本：pw-core.js（引擎）与 local-server.js（同页服务端）；
@@ -15,7 +15,7 @@ const fs = require('fs');
 const path = require('path');
 
 const SRC = path.join(__dirname, 'public', 'index.html');
-const OUT = path.join(__dirname, 'web', 'index.html');
+const OUT = path.join(__dirname, 'site', 'index.html');
 
 function main() {
   let html = fs.readFileSync(SRC, 'utf8');

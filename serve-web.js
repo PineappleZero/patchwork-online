@@ -1,6 +1,6 @@
-// 纯粹用来本地预览 web/ 的静态服务（与发布产物无关，仅开发期用）
+// 纯粹用来本地预览 site/ 的静态服务（与发布产物无关，仅开发期用）
 const http = require('http'), fs = require('fs'), path = require('path');
-const ROOT = path.join(__dirname, 'web');
+const ROOT = path.join(__dirname, 'site');
 const PORT = Number(process.env.PORT || 3199);
 const types = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8',
                 '.css':'text/css; charset=utf-8', '.png':'image/png', '.ico':'image/x-icon' };
@@ -14,4 +14,4 @@ http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': types[path.extname(f)] || 'application/octet-stream' });
     res.end(b);
   });
-}).listen(PORT, '0.0.0.0', () => console.log('web 预览服务：http://127.0.0.1:' + PORT));
+}).listen(PORT, '0.0.0.0', () => console.log('site 预览服务：http://127.0.0.1:' + PORT));

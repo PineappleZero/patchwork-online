@@ -9,14 +9,14 @@
  *   所以这里做的是**机械转换**（require → 全局引用，module.exports → 全局挂载），
  *   逻辑一行不改。改完跑 `node build-web.js` 即可重新生成，源文件永远是唯一真相。
  *
- * 输出：web/pw-core.js（三个模块合并 + 一个微型 CommonJS 垫片）
+ * 输出：site/pw-core.js（三个模块合并 + 一个微型 CommonJS 垫片）
  */
 
 const fs = require('fs');
 const path = require('path');
 
 const SERVER = path.join(__dirname, 'server');
-const OUT = path.join(__dirname, 'web', 'pw-core.js');
+const OUT = path.join(__dirname, 'site', 'pw-core.js');
 
 /** 模块加载顺序：被依赖的在前 */
 const MODULES = [

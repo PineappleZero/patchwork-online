@@ -1263,11 +1263,18 @@ kbd {
 .ov-body .win { color: var(--green); font-weight: 600; }
 .ov-body .lose { color: var(--red); }
 
-/* ---------------- 锦标赛（v1.7） ---------------- */
+/* ---------------- 锦标赛（v1.7.1 云端版） ---------------- */
 .tw-join { display: flex; gap: 8px; margin-bottom: 8px; }
 .tw-join input[type="text"] { flex: 1; min-width: 0; }
+.tw-join #twName { flex: 1.6; }
+.tw-join #twPhone { flex: 1; font-variant-numeric: tabular-nums; }
 .tw-join .btn { flex: none; }
 .tw-err { margin: 0 0 8px; color: var(--red); font-size: 12.5px; }
+.tw-today { margin: 0 0 8px; color: var(--gold); font-size: 12.5px; }
+@media (max-width: 660px) {
+  .tw-join { flex-wrap: wrap; }
+  .tw-join #twName { flex-basis: 100%; }
+}
 .tw-hint { margin: 0 0 10px; font-size: 12.5px; color: var(--text-faint); line-height: 1.8; }
 .tw-hint b { color: var(--gold); }
 .tw-stats { margin: 0 0 10px; font-size: 13px; color: var(--text-dim); }
@@ -1342,7 +1349,6 @@ kbd {
   padding: 6px 10px;
 }
 .tw-muted { color: var(--text-faint); }
-.tw-foot { margin-top: 10px; display: flex; justify-content: flex-end; }
 .tw-empty { margin: 4px 0 10px; font-size: 13px; color: var(--text-faint); text-align: center; }
 
 /* ---------------- 等待开局 ---------------- */

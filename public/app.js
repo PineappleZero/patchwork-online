@@ -1828,8 +1828,18 @@ function escapeHtml(s) {
 /* ---------------- 更新日志 ---------------- */
 const CHANGELOG = [
   {
-    v: 'v1.7',
+    v: 'v1.7.1',
     date: '当前',
+    items: [
+      '<b>锦标赛榜单上云了</b>：排行榜从「存在自己设备上」升级成<b>云端共享</b> —— 所有玩家的成绩汇成同一份榜单，谁净分多少、赢了几场，打开就能看到全场排行，点记录行回看对战时间、行动流水和得分构成。',
+      '<b>手机号后 6 位 = 你的身份凭证</b>：参赛除了昵称还要填手机尾号，<b>每个尾号每天只能挑战一次</b> —— 换昵称也绕不过去，云端按尾号锁定。尾号只用于身份校验，不上榜、不展示。开始挑战前会先查云端，今天这个尾号打过就会拦下来（北京时间 0 点后重置）。',
+      '<b>「清空记录」按钮退役</b>：榜单在云端人人共享，本机不再保存对局记录，这个按钮也就没了用武之地。参赛昵称和手机尾号还是会记在设备上，下次打开直接预填。',
+      '<b>离线也有说法</b>：云端连不上时，锦标赛入口会明确提示「榜单服务暂时连不上」，此时不能开始挑战 —— 不会出现赢了却记不上分的糊涂账。',
+    ],
+  },
+  {
+    v: 'v1.7',
+    date: '上一版',
     items: [
       '<b>补丁环上的每个补丁都能看到价格了</b>：圈上（和框上）每个可选补丁旁边都挂了一枚小签 —— <b>金色是纽扣、蓝色是时间、绿色是每局收入</b>，一眼比价不用点开猜。这个洞从 v1.0 一直留到现在，终于补上了。手机上签会自动换成竖排小签，不挤不挡。',
       '<b>锦标赛来了</b>：主菜单多了一张「<b>锦标赛 · 挑战困难</b>」卡。交个参赛昵称，固定打困难档 wzzzhhhhh；每一局的对战时间、行动流水和双方得分构成都会记下来，按「<b>你的总分 − wzzzhhhhh 总分</b>」从高到低上榜，点记录行就能回看整局。记录存在自己设备上（最多 100 场），随时可清。',
@@ -1839,7 +1849,7 @@ const CHANGELOG = [
   },
   {
     v: 'v1.6.7',
-    date: '上一版',
+    date: '更早',
     items: [
       '<b>困难人机又变强了一截</b>：上一版是「我一手 → 对手最凶一手」，这一版改成<b>能看六层</b>的递归搜索（我 → 对手 → 我 → 对手 → 我 → 对手），并且用 <b>Alpha-Beta 剪枝</b>把深搜压进每步 0.5 秒的时间预算里 —— 看得深得多，也不至于卡。',
       '<b>它现在会算「未来」</b>：给局面定价时，不再拿「空格 × 罚分」粗估，而是扣掉<b>那些注定填不上的孤立小洞</b>，还会算 7×7 奖励的「临门一脚」—— 差几格就能拼满时它会拼命去抢。',
@@ -2019,48 +2029,84 @@ function renderChangelog() {
 
 /* ---------------- 菜单事件 ---------------- */
 
-/* ---------------- 锦标赛（v1.7） ----------------
+/* ---------------- 锦标赛（v1.7.1 云端版） ----------------
  * 固定困难档单挑 wzzzhhhhh，按「玩家总分 − wzzzhhhhh 总分」排名。
- * 记录存 localStorage（pwTourneyV1）：对战时间、行动流水、双方得分构成。
+ * 榜单存云端（tw_games 表，WorkBuddy Cloud Service）：所有玩家共享同一份排行榜。
+ * 每个昵称每天只能挑战一次 —— 开始前按昵称查云端拦截，云端唯一索引 (name, day) 兜底；
+ * 云端不可用时明确提示，绝不静默降级。
  * 只有从锦标赛入口点「开始挑战」的那一局才入库：
  *   TW.pending 只在点击时挂上，第一个 solo playing 状态武装成 S.tourney；
- *   结算写入榜单即清空 —— 「再来一局」开出的新局不会混进排行榜。 */
+ *   结算提交云端后清空 —— 「再来一局」开出的新局不会混进排行榜。 */
 const TW = {
-  KEY: 'pwTourneyV1',
-  NAME_KEY: 'pwTourneyName',
-  CAP: 100,        // 榜单最多留 100 条，防 localStorage 被行动流水撑爆
+  NAME_KEY: 'pwTourneyName',  // 本机记住参赛昵称
+  PHONE_KEY: 'pwTourneyPhone', // 本机记住手机尾号（身份凭证，云端每天一次按它锁定）
   ACTION_CAP: 200, // 单局最多记 200 条行动
-  pending: null,
+  pending: null,   // 点「开始挑战」挂上，武装成 S.tourney 即清空
+  cloud: null,     // 懒初始化的云客户端
+  stub: null,      // 测试注入点：uicheck 里塞伪云 API，测试绝不触真实榜单
 };
+// 云环境 publicConfig（激活云服务时下发）。publishableKey 只用来标识应用，
+// 权限由服务端按 Origin 精确匹配强制，放进前端源码是官方允许的用法。
+const TWC_ENDPOINT = 'https://patchwork-online.app.workbuddy.host';
+const TWC_PUBLISHABLE_KEY = 'wbpk_UY01JVqxYKljhxdEMCrcWt_Q1CcTbFcW9DE9cXDLCVKdVqRDf0kNM1C';
 
-function twLoad() {
-  try {
-    const arr = JSON.parse(localStorage.getItem(TW.KEY) || '[]');
-    return Array.isArray(arr) ? arr : [];
-  } catch (e) { return []; }
+/** 云数据库门面。SDK 没加载好（离线 / CDN 失败）返回 null —— 上层给出明确提示。 */
+function twCloudDb() {
+  if (TW.stub) return null; // 测试态不用真客户端
+  if (!TW.cloud) {
+    if (typeof WorkBuddyCloud === 'undefined') return null;
+    try {
+      TW.cloud = WorkBuddyCloud.createWorkBuddyCloud({
+        endpoint: TWC_ENDPOINT,
+        publishableKey: TWC_PUBLISHABLE_KEY,
+      });
+    } catch (e) { return null; }
+  }
+  return TW.cloud.database;
 }
 
-/** 行动流水占地方：存不下就先截半重试，再不行只留比分，最后默默放弃。 */
-function twSave(list) {
-  try { localStorage.setItem(TW.KEY, JSON.stringify(list)); return; } catch (e) { /* 继续 */ }
-  try {
-    localStorage.setItem(TW.KEY, JSON.stringify(
-      list.map((r) => Object.assign({}, r, {
-        actions: (r.actions || []).slice(0, Math.ceil((r.actions || []).length / 2)),
-      }))
-    ));
-    return;
-  } catch (e) { /* 继续 */ }
-  try {
-    localStorage.setItem(TW.KEY, JSON.stringify(list.map((r) => Object.assign({}, r, { actions: [] }))));
-  } catch (e) { /* 真放不下了，放弃本次保存 */ }
+/** 今天的日期（Asia/Shanghai），与云端 day 列默认值对齐 —— 「每天一次」按这个算。 */
+function twToday() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date());
 }
 
-function twAdd(rec) {
-  const list = twLoad();
-  list.push(rec);
-  while (list.length > TW.CAP) list.shift();
-  twSave(list);
+/* 云端数据访问（tw_games 表）。TW.stub 存在时全部转发给测试桩。 */
+async function twCloudList() {
+  if (TW.stub) return TW.stub.list();
+  const db = twCloudDb();
+  if (!db) return { data: null, error: { message: '云端服务不可用' } };
+  return db.from('tw_games')
+    .select('id,name,diff,win,my_score,bot_score,day,created_at')
+    .order('diff', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(100);
+}
+
+async function twCloudDetail(id) {
+  if (TW.stub) return TW.stub.detail(id);
+  const db = twCloudDb();
+  if (!db) return { data: null, error: { message: '云端服务不可用' } };
+  return db.from('tw_games').select('name,payload,created_at').eq('id', id).maybeSingle();
+}
+
+/** 这个手机尾号今天是否已经挑战过（每天一次的第一道闸；换昵称也绕不过）。 */
+async function twCloudToday(phone6) {
+  if (TW.stub) return TW.stub.today(phone6);
+  const db = twCloudDb();
+  if (!db) return { data: null, error: { message: '云端服务不可用' } };
+  return db.from('tw_games').select('id,diff,name').eq('phone6', phone6).eq('day', twToday()).limit(1);
+}
+
+async function twCloudSubmit(rec) {
+  if (TW.stub) return TW.stub.submit(rec);
+  const db = twCloudDb();
+  if (!db) return { data: null, error: { message: '云端服务不可用' } };
+  return db.from('tw_games').insert(rec).select();
+}
+
+/** 云调用统一包一层：网络层抛异常也归一成 { data, error }，调用方好写。 */
+function twSafe(p) {
+  return p.catch(() => ({ data: null, error: { message: '网络异常' } }));
 }
 
 function twFmtTime(ts) {
@@ -2081,11 +2127,40 @@ function twDiffBadge(diff) {
   return `<span class="tw-badge ${cls}">${txt}</span>`;
 }
 
-/** 渲染排行榜：按净分（我 − wzzzhhhhh）从高到低；点行展开对战详情。 */
-function renderTourney() {
-  const list = twLoad().sort((a, b) => (b.diff - a.diff) || (b.at - a.at));
+/** 详情块 HTML：payload 里带双方得分构成与行动流水，createdAt 是云端结算时间。 */
+function twDetailHtml(rowName, payload, createdAt) {
+  const me = (payload && payload.me) || {};
+  const bot = (payload && payload.bot) || {};
+  const act = (payload && payload.actions) || [];
+  const dur = (payload && payload.dur) || 0;
+  return `
+    <div class="tw-drow"><span>对战时间</span><b>${twFmtTime(createdAt)} · 用时 ${twFmtDur(dur)}</b></div>
+    <table class="score-table">
+      <thead><tr><th></th><th>玩家</th><th>纽扣</th><th>7×7</th><th>空格</th><th>总分</th></tr></thead>
+      <tbody>
+        <tr class="first"><td class="rk">我</td><td class="nm">${escapeHtml(rowName)}</td><td>${me.buttons}</td><td>${me.bonus}</td><td>−${me.penalty}</td><td class="tt">${me.total}</td></tr>
+        <tr><td class="rk">对手</td><td class="nm">wzzzhhhhh</td><td>${bot.buttons}</td><td>${bot.bonus}</td><td>−${bot.penalty}</td><td class="tt">${bot.total}</td></tr>
+      </tbody>
+    </table>
+    <div class="tw-actions-label">对战行动（${act.length} 条）</div>
+    <div class="tw-actions">${act.length
+      ? act.map((a) => `<div>${escapeHtml(a)}</div>`).join('')
+      : '<div class="tw-muted">（本局行动没有记录下来）</div>'}</div>`;
+}
+
+/** 渲染云端榜单。list 为 null 表示云端不可用（明确报错，不静默降级）。 */
+function renderTourney(list) {
   const stats = $('twStats');
   const empty = $('twEmpty');
+  const box = $('twList');
+  if (list === null) {
+    stats.textContent = '';
+    empty.textContent = '云端榜单暂时连不上 —— 检查网络后重新打开试试。';
+    empty.hidden = false;
+    box.innerHTML = '';
+    return;
+  }
+  empty.textContent = '还没有人上榜 —— 交个昵称，赢下第一局！';
   if (!list.length) {
     stats.textContent = '';
     empty.hidden = false;
@@ -2093,74 +2168,153 @@ function renderTourney() {
     const best = list[0].diff;
     const wins = list.filter((r) => r.diff > 0).length;
     const rate = Math.round((wins * 100) / list.length);
-    stats.innerHTML = `共 <b>${list.length}</b> 场 · 最佳净分 <b>${best > 0 ? '+' + best : best}</b> · 胜 ${wins} 场（胜率 ${rate}%）`;
+    let statHtml = `云端共 <b>${list.length}</b> 场 · 最佳净分 <b>${best > 0 ? '+' + best : best}</b> · 胜 ${wins} 场（胜率 ${rate}%）`;
+    const myName = twSavedName();
+    if (myName) {
+      const mine = list.filter((r) => r.name === myName);
+      if (mine.length) {
+        const myBest = mine[0].diff; // 榜单已按净分降序，同名第一条即最佳
+        const myRank = list.findIndex((r) => r.name === myName) + 1;
+        statHtml += ` · 你的最佳 <b>${myBest > 0 ? '+' + myBest : myBest}</b>（第 <b>${myRank}</b> 名）`;
+      }
+    }
+    stats.innerHTML = statHtml;
     empty.hidden = true;
   }
-  const box = $('twList');
-  box.innerHTML = list.map((rec, i) => {
-    const me = rec.me || {};
-    const bot = rec.bot || {};
-    const act = rec.actions || [];
-    const detail = `
-      <div class="tw-detail" hidden>
-        <div class="tw-drow"><span>对战时间</span><b>${twFmtTime(rec.at)} · 用时 ${twFmtDur(rec.dur || 0)}</b></div>
-        <table class="score-table">
-          <thead><tr><th></th><th>玩家</th><th>纽扣</th><th>7×7</th><th>空格</th><th>总分</th></tr></thead>
-          <tbody>
-            <tr class="first"><td class="rk">我</td><td class="nm">${escapeHtml(rec.name)}</td><td>${me.buttons}</td><td>${me.bonus}</td><td>−${me.penalty}</td><td class="tt">${me.total}</td></tr>
-            <tr><td class="rk">对手</td><td class="nm">wzzzhhhhh</td><td>${bot.buttons}</td><td>${bot.bonus}</td><td>−${bot.penalty}</td><td class="tt">${bot.total}</td></tr>
-          </tbody>
-        </table>
-        <div class="tw-actions-label">对战行动（${act.length} 条）</div>
-        <div class="tw-actions">${act.length
-          ? act.map((a) => `<div>${escapeHtml(a)}</div>`).join('')
-          : '<div class="tw-muted">（本局行动没有记录下来）</div>'}</div>
-      </div>`;
-    return `
-      <div class="tw-row" data-tw-id="${escapeHtml(rec.id || String(i))}">
-        <span class="tw-rank">${i + 1}</span>
-        <span class="tw-name">${escapeHtml(rec.name)}</span>
-        ${twDiffBadge(rec.diff)}
-        <span class="tw-score">${me.total} : ${bot.total}</span>
-        <span class="tw-date">${twFmtTime(rec.at)}</span>
-        ${detail}
-      </div>`;
-  }).join('');
+  box.innerHTML = list.map((rec, i) => `
+    <div class="tw-row" data-tw-id="${escapeHtml(String(rec.id))}">
+      <span class="tw-rank">${i + 1}</span>
+      <span class="tw-name">${escapeHtml(rec.name)}</span>
+      ${twDiffBadge(rec.diff)}
+      <span class="tw-score">${rec.my_score} : ${rec.bot_score}</span>
+      <span class="tw-date">${twFmtTime(rec.created_at)}</span>
+    </div>`).join('');
+  // 点行展开详情：首次点开时才从云端拉行动流水和得分构成（榜单行本身不带）
   Array.from(box.querySelectorAll('.tw-row')).forEach((row) => {
-    row.onclick = () => {
-      const d = row.querySelector('.tw-detail');
-      if (d) d.hidden = !d.hidden;
+    row.onclick = async () => {
+      const d0 = row.querySelector('.tw-detail');
+      if (d0) { d0.hidden = !d0.hidden; return; }
+      const d = document.createElement('div');
+      d.className = 'tw-detail';
+      d.innerHTML = '<div class="tw-muted">正在载入对战详情…</div>';
+      row.appendChild(d);
+      const res = await twSafe(twCloudDetail(row.dataset.twId));
+      if (res.error || !res.data) { d.remove(); return; } // 失败收掉，再点即重试
+      d.innerHTML = twDetailHtml(res.data.name, res.data.payload, res.data.created_at);
     };
   });
 }
 
-function openTourney() {
-  let saved = '';
-  try { saved = localStorage.getItem(TW.NAME_KEY) || ''; } catch (e) { /* 忽略 */ }
-  $('twName').value = saved || ($('playerName').value || '').trim();
-  $('twErr').hidden = true;
-  $('btnTourneyClear').textContent = '清空记录';
-  renderTourney();
-  $('tourneyModal').classList.add('show');
-  setMenuMsg('');
+/** 本机记住的参赛昵称 / 手机尾号（只当提示与预填用，拦截以输入框里的值为准）。 */
+function twSavedName() {
+  try { return localStorage.getItem(TW.NAME_KEY) || ''; } catch (e) { return ''; }
 }
 
-/** 点「开始挑战」：昵称必填；过关后把昵称带进建房参数，等首个 solo 状态武装记录。 */
-function twStartChallenge() {
+function twSavedPhone() {
+  try { return localStorage.getItem(TW.PHONE_KEY) || ''; } catch (e) { return ''; }
+}
+
+/** 今日状态行：已挑战（按钮禁用）/ 云不可用（按钮禁用）/ 正常。 */
+function twRenderToday(st) {
+  const el = $('twToday');
+  const btn = $('btnTourneyGo');
+  btn.disabled = !st.ok || Boolean(st.rec);
+  if (!st.ok) {
+    el.textContent = '⚠ 榜单服务暂时连不上，无法开始挑战。';
+    el.hidden = false;
+    return;
+  }
+  if (st.rec) {
+    const d = st.rec.diff;
+    const who = st.rec.name ? `今天这个尾号已经用「${escapeHtml(st.rec.name)}」挑战过` : '今天这个尾号已经挑战过';
+    el.innerHTML = `${who}（净分 ${d > 0 ? '+' + d : d}），明天再来 —— 每个尾号每天只有一次。`;
+    el.hidden = false;
+    return;
+  }
+  el.hidden = true;
+}
+
+function openTourney() {
+  $('twName').value = twSavedName() || ($('playerName').value || '').trim();
+  $('twPhone').value = twSavedPhone();
+  $('twErr').hidden = true;
+  $('twToday').hidden = true;
+  $('twStats').textContent = '';
+  $('twEmpty').hidden = true;
+  $('twList').innerHTML = '<div class="tw-muted">正在载入云端榜单…</div>';
+  $('tourneyModal').classList.add('show');
+  setMenuMsg('');
+  twRefresh();
+}
+
+/** 拉云端榜单 + 按本机记住的手机尾号查今日状态，一次弹层打开全部就绪。 */
+async function twRefresh() {
+  const savedPhone = twSavedPhone();
+  const [listRes, todayRes] = await Promise.all([
+    twSafe(twCloudList()),
+    /^\d{6}$/.test(savedPhone) ? twSafe(twCloudToday(savedPhone)) : Promise.resolve({ data: [], error: null }),
+  ]);
+  // 弹层已经关掉了就不用再刷（玩家手快时 twRefresh 可能晚归）
+  if (!$('tourneyModal').classList.contains('show')) return;
+  const list = (!listRes.error && Array.isArray(listRes.data)) ? listRes.data : null;
+  renderTourney(list);
+  if (!todayRes.error && Array.isArray(todayRes.data)) {
+    twRenderToday({ ok: true, rec: todayRes.data[0] || null });
+  } else {
+    twRenderToday({ ok: false });
+  }
+}
+
+/** 点「开始挑战」：昵称 + 手机尾号必填；按尾号查云端当日记录，过闸才建房。 */
+async function twStartChallenge() {
   const name = ($('twName').value || '').trim();
+  const phone6 = ($('twPhone').value || '').trim();
+  const err = $('twErr');
   if (!name) {
-    $('twErr').hidden = false;
+    err.textContent = '先填一个参赛昵称，才能上战场。';
+    err.hidden = false;
     $('twName').focus();
     return;
   }
-  try { localStorage.setItem(TW.NAME_KEY, name); } catch (e) { /* 忽略 */ }
-  $('playerName').value = name; // 服务端建房直接用参赛昵称
-  rememberName(name);
-  TW.pending = { name, startedAt: Date.now(), actions: [] };
-  $('tourneyModal').classList.remove('show');
-  setMenuMsg('');
-  SFX.play('click');
-  createRoom({ mode: 'solo', variant: 'classic', level: 'hard' });
+  if (!/^\d{6}$/.test(phone6)) {
+    err.textContent = '手机号后 6 位要填满 6 个数字 —— 这是你的身份凭证，每个尾号每天只有一次挑战机会。';
+    err.hidden = false;
+    $('twPhone').focus();
+    return;
+  }
+  const btn = $('btnTourneyGo');
+  if (btn.disabled) return;
+  btn.disabled = true;
+  let go = false;
+  try {
+    const res = await twSafe(twCloudToday(phone6));
+    if (res.error) {
+      err.textContent = '榜单服务暂时连不上 —— 稍后再试，不然赢了也没处记分。';
+      err.hidden = false;
+      return;
+    }
+    if (res.data && res.data.length) {
+      const used = res.data[0];
+      err.textContent = `这个手机号今天已经用「${used.name}」挑战过了 —— 每个尾号每天只有一次机会，明天再来。`;
+      err.hidden = false;
+      twRenderToday({ ok: true, rec: used });
+      return;
+    }
+    try {
+      localStorage.setItem(TW.NAME_KEY, name);
+      localStorage.setItem(TW.PHONE_KEY, phone6);
+    } catch (e) { /* 忽略 */ }
+    $('playerName').value = name; // 服务端建房直接用参赛昵称
+    rememberName(name);
+    TW.pending = { name, phone6, startedAt: Date.now(), actions: [] };
+    go = true;
+    $('tourneyModal').classList.remove('show');
+    setMenuMsg('');
+    SFX.play('click');
+    createRoom({ mode: 'solo', variant: 'classic', level: 'hard' });
+  } finally {
+    if (!go) btn.disabled = false;
+  }
 }
 
 /** 第一个 solo playing 状态到达时，把 pending 装载成 S.tourney 开始采集。 */
@@ -2169,13 +2323,14 @@ function maybeTourneyArm(msg) {
   if (msg.mode && msg.mode !== 'solo') return;
   S.tourney = {
     name: TW.pending.name,
+    phone6: TW.pending.phone6,
     startedAt: TW.pending.startedAt,
     actions: TW.pending.actions || [],
   };
   TW.pending = null;
 }
 
-/** 结算入库：从 result/st 里认出我和 bot 两个席位，记下时间与得分构成。 */
+/** 结算提交云端：从 result/st 里认出我和 bot 两个席位，组记录交给 twCloudSubmit。 */
 function twRecord(result, st) {
   const t = S.tourney;
   if (!t || !st || !st.players || !result || !result.scores) return;
@@ -2190,24 +2345,31 @@ function twRecord(result, st) {
   const me = result.scores[mySeat];
   const bot = result.scores[botSeat];
   if (!me || !bot) return;
-  twAdd({
-    id: `tw${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+  S.tourney = null; // 先摘掉，防 pushLog 的采集钩子把提示当行动记录
+  const diff = (me.total || 0) - (bot.total || 0);
+  twSafe(twCloudSubmit({
     name: t.name,
-    at: Date.now(),
-    dur: Math.max(0, Date.now() - t.startedAt),
-    me: { buttons: me.buttons, bonus: me.bonus, penalty: me.penalty, total: me.total },
-    bot: { buttons: bot.buttons, bonus: bot.bonus, penalty: bot.penalty, total: bot.total },
-    diff: (me.total || 0) - (bot.total || 0),
+    phone6: t.phone6,
+    diff,
     win: result.winner === mySeat,
-    actions: (t.actions || []).slice(0, TW.ACTION_CAP),
+    my_score: me.total || 0,
+    bot_score: bot.total || 0,
+    payload: {
+      dur: Math.max(0, Date.now() - t.startedAt),
+      actions: (t.actions || []).slice(0, TW.ACTION_CAP),
+      me: { buttons: me.buttons, bonus: me.bonus, penalty: me.penalty, total: me.total },
+      bot: { buttons: bot.buttons, bonus: bot.bonus, penalty: bot.penalty, total: bot.total },
+    },
+  })).then((res) => {
+    if (res && !res.error) {
+      pushLog(`☁ 已记入云端排行榜（${escapeHtml(t.name)} ${diff > 0 ? '+' + diff : diff}）`);
+    } else if (res && res.error && res.error.code === '23505') {
+      pushLog('☁ 这个手机号今天已有云端记录（每个尾号每天一次），本局没能上榜');
+    } else {
+      pushLog('☁ 云端排行榜提交失败（网络原因），本局成绩没能上榜');
+    }
   });
-  S.tourney = null;
 }
-
-/* 清空按钮走两段确认（点一下变「再点一下确认」，3 秒没动静自动复原），
- * 不用 confirm() 弹窗 —— 无头测试里会卡死，手机上也多一步操作。 */
-let twClearArm = 0;
-let twClearTimer = 0;
 
 $('btnTourney').onclick = () => { SFX.play('click'); openTourney(); };
 $('btnTourneyClose').onclick = () => { $('tourneyModal').classList.remove('show'); };
@@ -2215,26 +2377,20 @@ $('btnTourneyGo').onclick = twStartChallenge;
 $('twName').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') twStartChallenge();
 });
-$('twName').addEventListener('input', () => { $('twErr').hidden = true; });
-$('btnTourneyClear').onclick = () => {
-  const btn = $('btnTourneyClear');
-  if (!twLoad().length) { renderTourney(); return; }
-  if (!twClearArm) {
-    twClearArm = 1;
-    btn.textContent = '再点一下确认清空';
-    clearTimeout(twClearTimer);
-    twClearTimer = setTimeout(() => {
-      twClearArm = 0;
-      btn.textContent = '清空记录';
-    }, 3000);
-    return;
-  }
-  twClearArm = 0;
-  clearTimeout(twClearTimer);
-  btn.textContent = '清空记录';
-  twSave([]);
-  renderTourney();
-};
+$('twName').addEventListener('input', () => {
+  $('twErr').hidden = true;
+  $('btnTourneyGo').disabled = false; // 改了身份信息就重新给机会（拦截逻辑在 twStartChallenge 里兜底）
+});
+$('twPhone').addEventListener('input', () => {
+  // 只留数字，超 6 位砍掉；一动手输就撤掉错误提示
+  const v = $('twPhone').value.replace(/\D/g, '').slice(0, 6);
+  if ($('twPhone').value !== v) $('twPhone').value = v;
+  $('twErr').hidden = true;
+  $('btnTourneyGo').disabled = false;
+});
+$('twPhone').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') twStartChallenge();
+});
 
 function readName(fallback) {
   const v = ($('playerName').value || '').trim();
@@ -2450,6 +2606,8 @@ window.__pw = {
   /** 锦标赛进行中的载荷（v1.7）：未武装时是 null，uicheck 验证采集链路用 */
   get tourney() { return S.tourney; },
   get tourneyPending() { return TW.pending; },
+  /** 锦标赛云调用测试桩（v1.7.1）：塞 {list,today,detail,submit} 后云调用全走桩，绝不触真实榜单 */
+  set twCloudStub(v) { TW.stub = v; },
   /** 当前生效的规则数值（经典/魔改），等待房时是 null */
   get rules() { return (S.state && S.state.rules) || null; },
   /** 规则弹层的只读体检：哪几节在显示（v1.7 起只有一套规则，无版本差异） */

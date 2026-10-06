@@ -1,0 +1,10 @@
+{
+  "name": "patchwork-online",
+  "version": "1.7.1",
+  "private": true,
+  "description": "拼布 Patchwork：零依赖网页版（联机服务 + 静态单机构建）。start 脚本用于云端托管 site/ 静态产物。",
+  "scripts": {
+    "start": "node serve-web.js",
+    "build:static": "node build-static.js"
+  }
+}

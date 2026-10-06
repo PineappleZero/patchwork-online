@@ -170,7 +170,7 @@ function ok(cond, label, extra) {
       };
     })()`);
     ok(menu.missing.length === 0, '菜单控件齐全', '缺 ' + JSON.stringify(menu.missing));
-    ok(menu.cards === 4, 'v1.7 共 4 个开局入口（人机/锦标赛/同机/联机）', '实际 ' + menu.cards);
+    ok(menu.cards === 4, 'v1.7.1 共 4 个开局入口（人机/锦标赛/同机/联机）', '实际 ' + menu.cards);
     ok(menu.classicCards === 4 && menu.chaosCards === 0,
       '4 个入口全是经典版，魔改版入口一个不剩',
       `经典 ${menu.classicCards} / 魔改 ${menu.chaosCards}`);
@@ -473,144 +473,255 @@ function ok(cond, label, extra) {
     await waitFor(ws, `document.getElementById('menu').classList.contains('active')`, 12000, '回到主菜单');
     await sleep(600);
 
-    /* ---------- v1.7：锦标赛 ---------- */
-    console.log('\n[1c] 锦标赛：入口 / 昵称 / 排行榜 / 详情 / 结算入库（v1.7）');
+    /* ---------- v1.7.1：锦标赛（云端版） ---------- */
+    console.log('\n[1c] 锦标赛：入口 / 昵称+手机尾号 / 云榜单 / 详情 / 结算提交（v1.7.1）');
+    // 云测试桩：所有云调用走桩（模拟云端唯一索引 phone6+day），绝不触真实榜单。
+    // 注意：回主菜单会整页重载（leaveToMenu 里 location.href），内存桩会丢 —— 需要时重新 evaluate。
+    const TW_STUB_JS = `(function(){
+      window.__twSubmits = [];
+      window.__twDb = { rows: [], nextId: 1 };
+      const dayOf = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date());
+      window.__pw.twCloudStub = {
+        list: async () => {
+          const rs = window.__twDb.rows.slice()
+            .sort((a, b) => (b.diff - a.diff) || (a.created_at < b.created_at ? 1 : -1));
+          return {
+            data: rs.map((r) => ({ id: r.id, name: r.name, diff: r.diff, win: r.win,
+              my_score: r.my_score, bot_score: r.bot_score, created_at: r.created_at })),
+            error: null,
+          };
+        },
+        today: async (phone6) => {
+          const hit = window.__twDb.rows.find((r) => r.phone6 === phone6 && r.day === dayOf());
+          return { data: hit ? [{ id: hit.id, diff: hit.diff, name: hit.name }] : [], error: null };
+        },
+        detail: async (id) => {
+          const hit = window.__twDb.rows.find((r) => String(r.id) === String(id));
+          return hit
+            ? { data: { name: hit.name, payload: hit.payload, created_at: hit.created_at }, error: null }
+            : { data: null, error: { message: 'not found' } };
+        },
+        submit: async (rec) => {
+          window.__twSubmits.push(rec);
+          const dup = window.__twDb.rows.find((r) => r.phone6 === rec.phone6 && r.day === dayOf());
+          if (dup) return { data: null, error: { code: '23505', message: 'duplicate' } };
+          const row = Object.assign({}, rec, { id: window.__twDb.nextId++, day: dayOf(),
+            created_at: new Date(Date.now() - window.__twDb.rows.length * 60000).toISOString() });
+          window.__twDb.rows.push(row);
+          return { data: [{ id: row.id }], error: null };
+        },
+      };
+      return 'stubbed';
+    })()`;
+    // 预置 3 条云端记录（都记在今天，配合「每天一次」断言）；BODY 形式方便复用
+    const TW_SEED_BODY = `
+      const now = Date.now();
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date());
+      const mk = (id, name, phone6, diff, minsAgo) => ({
+        id, name, phone6, diff,
+        win: diff > 0,
+        my_score: diff > 0 ? 40 + diff : 40, bot_score: 40,
+        day: today,
+        created_at: new Date(now - minsAgo * 60000).toISOString(),
+        payload: { dur: 300000, actions: ['开局'],
+          me: { buttons: 30, bonus: 0, penalty: 2, total: 30 }, bot: { buttons: 30, bonus: 0, penalty: 2, total: 30 } },
+      });
+      window.__twDb.rows.push(
+        mk('t1', '阿布', '111111', 19, 180),
+        mk('t2', '小圆', '222222', 8, 120),
+        mk('t3', '大力', '333333', -31, 60)
+      );
+      window.__twDb.nextId = 4;
+      return window.__twDb.rows.length;
+    `;
+    const TW_SEED_JS = `(function(){ ${TW_SEED_BODY} })()`;
     {
-      // 1. 入口打开弹层；没有记录时是空榜提示
+      // 0. 注入云测试桩 + 清本机记忆，给干净现场
+      const stubbed = await evaluate(ws, TW_STUB_JS);
+      await evaluate(ws, `(function(){
+        localStorage.removeItem('pwTourneyName');
+        localStorage.removeItem('pwTourneyPhone');
+        return 'ok';
+      })()`);
+      ok(stubbed === 'stubbed', '云测试桩就位（云调用全走桩，不触真实榜单）', stubbed);
+
+      // 1. 入口打开弹层；云端空榜时空榜提示，开始按钮可用
       await evaluate(ws, `document.getElementById('btnTourney').click()`);
       await waitFor(ws, `document.getElementById('tourneyModal').classList.contains('show')`, 5000, '锦标赛弹层打开');
-      await sleep(200);
+      await sleep(300);
       const tw0 = await evaluate(ws, `(function(){
         return {
           empty: !document.getElementById('twEmpty').hidden,
           rows: document.querySelectorAll('#twList .tw-row').length,
           errHidden: document.getElementById('twErr').hidden,
+          todayHidden: document.getElementById('twToday').hidden,
+          goEnabled: !document.getElementById('btnTourneyGo').disabled,
         };
       })()`);
-      ok(tw0.empty && tw0.rows === 0 && tw0.errHidden,
-        '空榜提示在位，错误提示默认藏着', JSON.stringify(tw0));
+      ok(tw0.empty && tw0.rows === 0 && tw0.errHidden && tw0.todayHidden && tw0.goEnabled,
+        '云端空榜：空榜提示在位、今日状态与错误提示藏着、按钮可用', JSON.stringify(tw0));
 
-      // 2. 昵称必填：清空后点「开始挑战」被拦下
-      //（openTourney 会拿玩家名预填昵称，这里先抹掉才能测到拦截分支）
-      await evaluate(ws, `document.getElementById('twName').value = ''`);
+      // 2. 昵称必填：清空昵称（尾号填好）点「开始挑战」被拦下
+      await evaluate(ws, `(function(){
+        document.getElementById('twName').value = '';
+        document.getElementById('twPhone').value = '135246';
+        document.getElementById('twPhone').dispatchEvent(new Event('input'));
+        return 'ok';
+      })()`);
       await evaluate(ws, `document.getElementById('btnTourneyGo').click()`);
       await sleep(200);
-      const twErr = await evaluate(ws, `(function(){
+      const twErrName = await evaluate(ws, `(function(){
         return {
           err: !document.getElementById('twErr').hidden,
           open: document.getElementById('tourneyModal').classList.contains('show'),
           pending: !!window.__pw.tourneyPending,
         };
       })()`);
-      ok(twErr.err && twErr.open && !twErr.pending,
-        '空昵称点开始挑战被拦下（红字提示、不进对局）', JSON.stringify(twErr));
+      ok(twErrName.err && twErrName.open && !twErrName.pending,
+        '空昵称点开始挑战被拦下（红字提示、不进对局）', JSON.stringify(twErrName));
 
-      // 3. 预置三条记录验证排序与统计（关掉再打开触发重渲染）
+      // 3. 手机尾号必填且必须 6 位数字
       await evaluate(ws, `(function(){
-        const now = Date.now();
-        twAdd({ id: 'twT1', name: '阿布', at: now - 86400000, dur: 300000,
-          me: { buttons: 40, bonus: 7, penalty: 2, total: 45 },
-          bot: { buttons: 30, bonus: 0, penalty: 4, total: 26 },
-          diff: 19, win: true, actions: ['阿布 买下 C3 补丁', 'wzzzhhhhh 直奔 4 格'] });
-        twAdd({ id: 'twT2', name: '阿布', at: now - 43200000, dur: 420000,
-          me: { buttons: 21, bonus: 0, penalty: 8, total: 13 },
-          bot: { buttons: 38, bonus: 7, penalty: 1, total: 44 },
-          diff: -31, win: false, actions: [] });
-        twAdd({ id: 'twT3', name: '小圆', at: now - 3600000, dur: 260000,
-          me: { buttons: 33, bonus: 7, penalty: 3, total: 37 },
-          bot: { buttons: 31, bonus: 0, penalty: 2, total: 29 },
-          diff: 8, win: true, actions: ['小圆 跳过领纽扣'] });
-        return twLoad().length;
+        document.getElementById('twName').value = '测试选手';
+        document.getElementById('twPhone').value = '';
+        document.getElementById('twPhone').dispatchEvent(new Event('input'));
+        return 'ok';
       })()`);
+      await evaluate(ws, `document.getElementById('btnTourneyGo').click()`);
+      await sleep(200);
+      const twErrPhone1 = await evaluate(ws, `!document.getElementById('twErr').hidden`);
+      await evaluate(ws, `(function(){
+        document.getElementById('twPhone').value = '1352';
+        document.getElementById('twPhone').dispatchEvent(new Event('input'));
+        return 'ok';
+      })()`);
+      await evaluate(ws, `document.getElementById('btnTourneyGo').click()`);
+      await sleep(200);
+      const twErrPhone2 = await evaluate(ws, `(function(){
+        return {
+          err: !document.getElementById('twErr').hidden,
+          pending: !!window.__pw.tourneyPending,
+          phoneKept: document.getElementById('twPhone').value,
+        };
+      })()`);
+      ok(twErrPhone1 === true && twErrPhone2.err && !twErrPhone2.pending,
+        '尾号缺省 / 不足 6 位都被拦下', JSON.stringify(twErrPhone2));
+
+      // 4. 预置 3 条云端记录（不同尾号，都记在今天），重开弹层验证排序与统计
+      await evaluate(ws, TW_SEED_JS);
       await evaluate(ws, `document.getElementById('btnTourneyClose').click()`);
       await sleep(100);
       await evaluate(ws, `document.getElementById('btnTourney').click()`);
-      await sleep(200);
+      await sleep(400);
       const tw1 = await evaluate(ws, `(function(){
         const rows = Array.from(document.querySelectorAll('#twList .tw-row'));
         return {
           rows: rows.length,
-          order: rows.map((r) => ({
-            badge: r.querySelector('.tw-badge').textContent,
-            score: r.querySelector('.tw-score').textContent,
-          })),
+          order: rows.map((r) => r.querySelector('.tw-badge').textContent),
           stats: document.getElementById('twStats').textContent,
           emptyHidden: document.getElementById('twEmpty').hidden,
         };
       })()`);
-      ok(tw1.rows === 3 && tw1.emptyHidden, '预置 3 条记录后榜单渲染 3 行、空榜提示藏起',
+      ok(tw1.rows === 3 && tw1.emptyHidden, '云端预置 3 条记录后榜单渲染 3 行、空榜提示藏起',
         JSON.stringify(tw1.order));
-      ok(tw1.order.map((r) => r.badge).join(',') === '+19,+8,-31',
-        '按净分从高到低排序（+19 → +8 → −31）', tw1.order.map((r) => r.badge).join(','));
-      ok(tw1.stats.indexOf('+19') >= 0 && tw1.stats.indexOf('67%') >= 0,
-        '统计头显示最佳净分 +19 与胜率 67%（2/3 场）', tw1.stats);
+      ok(tw1.order.join(',') === '+19,+8,-31', '按净分从高到低排序（+19 → +8 → −31）', tw1.order.join(','));
+      ok(tw1.stats.indexOf('3') >= 0 && tw1.stats.indexOf('+19') >= 0 && tw1.stats.indexOf('67%') >= 0,
+        '统计头显示共 3 场、最佳净分 +19 与胜率 67%（2/3 场）', tw1.stats);
 
-      // 4. 行点击展开/收起详情：得分构成 + 行动流水
+      // 5. 行点击展开详情（详情是首次点开时异步从云端拉的）
+      await evaluate(ws, `(function(){
+        document.querySelectorAll('#twList .tw-row')[0].click();
+        return 'ok';
+      })()`);
+      await sleep(400);
       const tw2 = await evaluate(ws, `(function(){
         const row = document.querySelectorAll('#twList .tw-row')[0];
         const d = row.querySelector('.tw-detail');
-        row.click();
-        const shown = d && !d.hidden;
-        const acts = d ? d.querySelectorAll('.tw-actions > div').length : 0;
+        const shown = Boolean(d) && !d.hidden;
         const tds = d ? d.querySelectorAll('.score-table tbody tr').length : 0;
-        row.click();
-        const hiddenAgain = d.hidden;
-        return { shown, acts, tds, hiddenAgain };
+        const acts = d ? d.querySelectorAll('.tw-actions > div').length : 0;
+        if (d) d.hidden = true; // 收起
+        return { shown, tds, acts, hiddenAgain: d ? d.hidden : false };
       })()`);
-      ok(tw2.shown && tw2.tds === 2 && tw2.acts === 2,
-        '点记录行展开详情：双方得分构成 + 行动流水', JSON.stringify(tw2));
+      ok(tw2.shown && tw2.tds === 2 && tw2.acts === 1,
+        '点记录行异步展开详情：双方得分构成 + 行动流水', JSON.stringify(tw2));
       ok(tw2.hiddenAgain, '再点一下详情收起');
 
-      // 5. 清空走两段确认（不用 confirm 弹窗，无头环境友好）
-      await evaluate(ws, `document.getElementById('btnTourneyClear').click()`);
+      // 6. 今日已挑战（UI 态）：本机记住的尾号 111111 今天已有记录 → 提示 + 按钮禁用
+      await evaluate(ws, `(function(){
+        localStorage.setItem('pwTourneyPhone', '111111');
+        localStorage.setItem('pwTourneyName', '阿布');
+        return 'ok';
+      })()`);
+      await evaluate(ws, `document.getElementById('btnTourneyClose').click()`);
       await sleep(100);
-      const tw3a = await evaluate(ws, `(function(){
+      await evaluate(ws, `document.getElementById('btnTourney').click()`);
+      await sleep(400);
+      const tw3 = await evaluate(ws, `(function(){
         return {
-          label: document.getElementById('btnTourneyClear').textContent,
-          kept: twLoad().length,
+          today: !document.getElementById('twToday').hidden,
+          todayText: document.getElementById('twToday').textContent,
+          goDisabled: document.getElementById('btnTourneyGo').disabled,
         };
       })()`);
-      ok(tw3a.label === '再点一下确认清空' && tw3a.kept === 3,
-        '清空按钮第一下只亮确认文案，记录还在', JSON.stringify(tw3a));
-      await evaluate(ws, `document.getElementById('btnTourneyClear').click()`);
-      await sleep(100);
-      const tw3b = await evaluate(ws, `(function(){
-        return {
-          label: document.getElementById('btnTourneyClear').textContent,
-          left: twLoad().length,
-          empty: !document.getElementById('twEmpty').hidden,
-        };
-      })()`);
-      ok(tw3b.left === 0 && tw3b.empty && tw3b.label === '清空记录',
-        '再点一下真的清空，空榜提示回来', JSON.stringify(tw3b));
+      ok(tw3.today && tw3.goDisabled && tw3.todayText.indexOf('阿布') >= 0,
+        '本机尾号今天已挑战：金色提示 + 按钮禁用', JSON.stringify(tw3));
 
-      // 6. 真实链路：填昵称 → 开始挑战 → 困难档人机局 + 载荷武装 + 行动采集
-      await evaluate(ws, `document.getElementById('twName').value = '测试选手'`);
+      // 7. 换昵称也绕不过：同尾号改名点开始 → 仍被拦（按尾号查云端）
+      await evaluate(ws, `(function(){
+        document.getElementById('twName').value = '改名选手';
+        document.getElementById('twName').dispatchEvent(new Event('input'));
+        return 'ok';
+      })()`);
+      await evaluate(ws, `document.getElementById('btnTourneyGo').click()`);
+      await sleep(300);
+      const tw4 = await evaluate(ws, `(function(){
+        return {
+          err: !document.getElementById('twErr').hidden,
+          errText: document.getElementById('twErr').textContent,
+          pending: !!window.__pw.tourneyPending,
+          inGame: document.getElementById('game').classList.contains('active'),
+        };
+      })()`);
+      ok(tw4.err && !tw4.pending && !tw4.inGame && tw4.errText.indexOf('111111') < 0 && tw4.errText.indexOf('今天') >= 0,
+        '换昵称同尾号：仍按尾号拦下（提示今天已挑战）', JSON.stringify(tw4));
+
+      // 8. 真实链路：新尾号 → 开始挑战 → 困难档人机局 + 载荷武装（昵称+尾号）+ 行动采集
+      await evaluate(ws, `(function(){
+        document.getElementById('twName').value = '测试选手';
+        document.getElementById('twName').dispatchEvent(new Event('input'));
+        document.getElementById('twPhone').value = '987654';
+        document.getElementById('twPhone').dispatchEvent(new Event('input'));
+        return 'ok';
+      })()`);
       await evaluate(ws, `document.getElementById('btnTourneyGo').click()`);
       await waitFor(ws, `document.getElementById('game').classList.contains('active')`, 8000, '锦标赛进入对局');
       await waitFor(ws, `document.getElementById('modeTag').textContent.indexOf('人机') >= 0`, 5000, '锦标赛模式标签');
       await sleep(1500); // 让电脑走两步，行动流水里就有内容
-      const tw4 = await evaluate(ws, `(function(){
+      const tw5 = await evaluate(ws, `(function(){
         const lvEl = document.querySelector('#playersWrap .pc-level');
+        const t = window.__pw.tourney;
         return {
-          armed: !!window.__pw.tourney,
-          name: window.__pw.tourney ? window.__pw.tourney.name : '',
+          armed: !!t,
+          name: t ? t.name : '',
+          phone6: t ? t.phone6 : '',
           pendingGone: !window.__pw.tourneyPending,
           level: lvEl ? (lvEl.dataset.level || '') : '',
-          acts: window.__pw.tourney ? window.__pw.tourney.actions.length : 0,
+          acts: t ? t.actions.length : 0,
           savedName: localStorage.getItem('pwTourneyName') || '',
+          savedPhone: localStorage.getItem('pwTourneyPhone') || '',
           playerName: document.getElementById('playerName').value,
         };
       })()`);
-      ok(tw4.armed && tw4.name === '测试选手' && tw4.pendingGone,
-        '开始挑战后记录载荷武装上（pending 已消费）', JSON.stringify({ name: tw4.name }));
-      ok(tw4.level === 'hard', '锦标赛固定困难档（data-level=hard）', tw4.level);
-      ok(tw4.acts > 0, '行动流水开始采集（日志文本进了载荷）', tw4.acts + ' 条');
-      ok(tw4.savedName === '测试选手' && tw4.playerName === '测试选手',
-        '参赛昵称记忆到 localStorage 并带进建房参数', tw4.savedName);
+      ok(tw5.armed && tw5.name === '测试选手' && tw5.phone6 === '987654' && tw5.pendingGone,
+        '开始挑战后记录载荷武装上（昵称+尾号，pending 已消费）', JSON.stringify({ name: tw5.name, phone6: tw5.phone6 }));
+      ok(tw5.level === 'hard', '锦标赛固定困难档（data-level=hard）', tw5.level);
+      ok(tw5.acts > 0, '行动流水开始采集（日志文本进了载荷）', tw5.acts + ' 条');
+      ok(tw5.savedName === '测试选手' && tw5.savedPhone === '987654' && tw5.playerName === '测试选手',
+        '昵称与尾号记忆到 localStorage，昵称带进建房参数', tw5.savedName + '/' + tw5.savedPhone);
 
-      // 7. 伪造结算入库：真实 state + 按当前席位构造的 result 调 showResult，
-      //    验证「净分/得分构成/行动流水 → localStorage」全链路（我 13 vs bot 43）
+      // 9. 伪造结算提交云端：真实 state + 按当前席位构造 result 调 showResult
+      //    验证「净分/尾号/得分构成/行动流水 → 云桩 submit」全链路（我 13 vs bot 43）
       await evaluate(ws, `(function(){
         const mySeat = window.__pw.seat;
         const scores = [];
@@ -619,30 +730,39 @@ function ok(cond, label, extra) {
         showResult({ winner: 1 - mySeat, ranking: [mySeat, 1 - mySeat], scores: scores });
         return 'ok';
       })()`);
-      await sleep(300);
-      const tw5 = await evaluate(ws, `(function(){
-        const list = twLoad();
-        const rec = list[list.length - 1] || null;
+      await sleep(500);
+      const tw6 = await evaluate(ws, `(function(){
+        const s = window.__twSubmits[window.__twSubmits.length - 1] || null;
         return {
-          n: list.length,
+          submits: window.__twSubmits.length,
           cleared: !window.__pw.tourney,
-          rec: rec ? {
-            name: rec.name, diff: rec.diff, win: rec.win,
-            meTotal: rec.me.total, botTotal: rec.bot.total,
-            acts: (rec.actions || []).length,
+          rec: s ? {
+            name: s.name, phone6: s.phone6, diff: s.diff, win: s.win,
+            myScore: s.my_score, botScore: s.bot_score,
+            acts: (s.payload && s.payload.actions ? s.payload.actions.length : 0),
+            hasMe: !!(s.payload && s.payload.me), hasBot: !!(s.payload && s.payload.bot),
           } : null,
           ovShown: document.getElementById('overlay').classList.contains('show'),
         };
       })()`);
-      ok(tw5.rec && tw5.rec.name === '测试选手' && tw5.rec.diff === -30 && tw5.rec.win === false &&
-        tw5.rec.meTotal === 13 && tw5.rec.botTotal === 43,
-        '结算入库：净分 = 我 13 − wzzzhhhhh 43 = −30，输局如实记录', JSON.stringify(tw5.rec));
-      ok(tw5.rec && tw5.rec.acts > 0, '入库记录带着本局的行动流水',
-        tw5.rec ? tw5.rec.acts + ' 条' : '');
-      ok(tw5.cleared, '结算后载荷清空，「再来一局」的新局不再采集');
-      ok(tw5.ovShown, '伪造结算同时弹出了正常结算面板');
+      ok(tw6.rec && tw6.rec.name === '测试选手' && tw6.rec.phone6 === '987654' &&
+        tw6.rec.diff === -30 && tw6.rec.win === false &&
+        tw6.rec.myScore === 13 && tw6.rec.botScore === 43,
+        '结算提交云端：净分 = 我 13 − wzzzhhhhh 43 = −30，尾号随记录上送', JSON.stringify(tw6.rec));
+      ok(tw6.rec && tw6.rec.acts > 0 && tw6.rec.hasMe && tw6.rec.hasBot,
+        '提交载荷带着本局行动流水与双方得分构成', tw6.rec ? tw6.rec.acts + ' 条' : '');
+      ok(tw6.cleared, '结算后载荷清空，「再来一局」的新局不再采集');
+      ok(tw6.ovShown, '伪造结算同时弹出了正常结算面板');
 
-      // 8. 回主菜单看榜：记录与详情都来自刚才的真实链路
+      // 10. 云端唯一索引第二道闸：同尾号再提交被 23505 拒绝
+      const tw7 = await evaluate(ws, `(async function(){
+        const r = await twCloudSubmit({ name: '再来一次', phone6: '987654', diff: 5,
+          win: true, my_score: 45, bot_score: 40, payload: {} });
+        return { dup: r.error && r.error.code === '23505', n: window.__twDb.rows.length };
+      })()`);
+      ok(tw7.dup && tw7.n === 4, '同尾号同天重复提交：云端唯一索引拒绝（23505）', JSON.stringify(tw7));
+
+      // 11. 回主菜单看榜：回菜单是整页重载（leaveToMenu），重注云桩并重建云端数据再验证
       await evaluate(ws, `document.getElementById('btnClose').click()`);
       await sleep(150);
       await evaluate(ws, `(function(){
@@ -652,30 +772,57 @@ function ok(cond, label, extra) {
       })()`);
       await waitFor(ws, `document.getElementById('menu').classList.contains('active')`, 12000, '回到主菜单');
       await sleep(400);
+      await evaluate(ws, TW_STUB_JS); // 重载后内存桩丢了，重新注入
+      // 重建云端 4 条：预置 3 条 + 「测试选手」刚才那局（模拟云端已经收到了第 9 步的提交）
+      await evaluate(ws, TW_SEED_JS);
+      await evaluate(ws, `(function(){
+        const today2 = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date());
+        window.__twDb.rows.push({
+          id: 4, name: '测试选手', phone6: '987654', diff: -30, win: false,
+          my_score: 13, bot_score: 43, day: today2,
+          created_at: new Date().toISOString(),
+          payload: { dur: 600000,
+            actions: ['测试选手 买下 C3 补丁', 'wzzzhhhhh 直奔 4 格', '测试选手 跳过领纽扣'],
+            me: { buttons: 21, bonus: 0, penalty: 8, total: 13 }, bot: { buttons: 40, bonus: 7, penalty: 4, total: 43 } },
+        });
+        window.__twDb.nextId = 5;
+        return window.__twDb.rows.length;
+      })()`);
       await evaluate(ws, `document.getElementById('btnTourney').click()`);
-      await sleep(200);
-      const tw6 = await evaluate(ws, `(function(){
-        const rows = document.querySelectorAll('#twList .tw-row');
-        const row = rows[0];
-        let detailActs = -1;
-        if (row) {
-          const d = row.querySelector('.tw-detail');
-          row.click();
-          detailActs = d ? d.querySelectorAll('.tw-actions > div').length : -1;
-        }
+      await sleep(400);
+      const tw8 = await evaluate(ws, `(function(){
+        const rows = Array.from(document.querySelectorAll('#twList .tw-row'));
+        const order = rows.map((r) => r.querySelector('.tw-badge').textContent);
+        // 点开「测试选手」那行（−30）
+        const idx = rows.findIndex((r) => r.querySelector('.tw-name').textContent === '测试选手');
+        if (idx >= 0) rows[idx].click();
+        return { rows: rows.length, order, idx };
+      })()`);
+      await sleep(400);
+      const tw9 = await evaluate(ws, `(function(){
+        const rows = Array.from(document.querySelectorAll('#twList .tw-row'));
+        const idx = rows.findIndex((r) => r.querySelector('.tw-name').textContent === '测试选手');
+        const d = idx >= 0 ? rows[idx].querySelector('.tw-detail') : null;
         return {
-          rows: rows.length,
-          badge: row ? row.querySelector('.tw-badge').textContent : '',
-          detailActs,
+          acts: d ? d.querySelectorAll('.tw-actions > div').length : -1,
+          name: d && d.querySelector('.score-table td.nm') ? d.querySelector('.score-table td.nm').textContent : '',
         };
       })()`);
-      ok(tw6.rows === 1 && tw6.badge === '-30',
-        '回主菜单重开弹层：刚才那局已经上榜（−30）', JSON.stringify({ rows: tw6.rows, badge: tw6.badge }));
-      ok(tw6.detailActs > 0, '详情里的行动流水来自真实对局日志', tw6.detailActs + ' 条');
+      ok(tw8.rows === 4 && tw8.order[0] === '+19' && tw8.order.indexOf('-30') >= 0,
+        '回主菜单重开弹层：云端 4 条，新局 −30 已上榜', JSON.stringify({ rows: tw8.rows, order: tw8.order }));
+      ok(tw9.acts > 0 && tw9.name === '测试选手',
+        '点「测试选手」行异步拉到云端详情：行动流水与昵称在位', JSON.stringify(tw9));
       await evaluate(ws, `document.getElementById('btnTourneyClose').click()`);
       await sleep(100);
-      // 清掉测试数据，给 [2] 一个干净现场
-      await evaluate(ws, `twSave([]); localStorage.removeItem('pwTourneyName');`);
+      // 清掉测试现场：桩、云数据容器、本机记忆，给 [2] 干净环境
+      await evaluate(ws, `(function(){
+        window.__pw.twCloudStub = null;
+        window.__twDb = null;
+        window.__twSubmits = null;
+        localStorage.removeItem('pwTourneyName');
+        localStorage.removeItem('pwTourneyPhone');
+        return 'cleaned';
+      })()`);
     }
 
     console.log('\n[2] 人机对战');
@@ -1076,9 +1223,9 @@ function ok(cond, label, extra) {
     })()`);
     ok(cl.show, '更新日志弹层能打开');
     ok(cl.vers >= 3, '包含 3 个及以上版本', '实际 ' + cl.vers);
-    ok(cl.first.indexOf('v1.7') === 0, '首条是 v1.7', cl.first);
-    ok(cl.items >= 4, 'v1.7 条目不少于 4 条（数值签 + 锦标赛 + 下架魔改 + 规则重写）', '实际 ' + cl.items);
-    ok(cl.versions.slice(0, 12).join(',') === 'v1.7,v1.6.7,v1.6.6,v1.6.5,v1.6.4,v1.6.3,v1.6.2,v1.6.1,v1.6,v1.5.1,v1.5,v1.4.1',
+    ok(cl.first.indexOf('v1.7.1') === 0, '首条是 v1.7.1', cl.first);
+    ok(cl.items >= 4, 'v1.7.1 条目不少于 4 条（云榜单 + 手机尾号每天一次 + 清空按钮退役 + 离线提示）', '实际 ' + cl.items);
+    ok(cl.versions.slice(0, 13).join(',') === 'v1.7.1,v1.7,v1.6.7,v1.6.6,v1.6.5,v1.6.4,v1.6.3,v1.6.2,v1.6.1,v1.6,v1.5.1,v1.5,v1.4.1',
       '版本号是连续的（含补记的 1.1）', cl.versions.join(' / '));
     await screenshot(ws, 'v165-4-changelog.png');
 

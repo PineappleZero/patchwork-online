@@ -8,6 +8,9 @@
      写成 data: 既不用多一个文件，也顺手省掉一次请求。 -->
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="style.css">
+<!-- 云服务 SDK（锦标赛云端排行榜用）。defer：不阻塞首屏；app.js 只在打开锦标赛弹层时
+     才会用到全局 WorkBuddyCloud，那时它必定已就绪。加载失败也不影响其它功能。 -->
+<script defer src="https://cdn.jsdelivr.net/npm/@tencent-ai/workbuddy-cloud-sdk@dev/lib/index.global.js"></script>
 </head>
 <body>
 
@@ -334,23 +337,22 @@
   </div>
 </div>
 
-<!-- ============ 锦标赛（v1.7） ============ -->
+<!-- ============ 锦标赛（v1.7.1 云端版） ============ -->
 <div id="tourneyModal" class="overlay">
   <div class="overlay-card wide">
     <h2>锦标赛 · 挑战困难 wzzzhhhhh</h2>
     <div class="ov-body tw-body">
       <div class="tw-join">
         <input id="twName" type="text" maxlength="12" placeholder="参赛昵称（必填，最多 12 字）" autocomplete="off">
+        <input id="twPhone" type="text" inputmode="numeric" maxlength="6" placeholder="手机号后 6 位" autocomplete="off">
         <button id="btnTourneyGo" class="btn primary">开始挑战</button>
       </div>
       <p class="tw-err" id="twErr" hidden>先填一个参赛昵称，才能上战场。</p>
-      <p class="tw-hint">固定<b>困难档</b>单挑 wzzzhhhhh，按「你的总分 − wzzzhhhhh 总分」从高到低排名。每一局的对战时间、行动和得分构成都会记下来，点下面的记录行就能回看。</p>
+      <p class="tw-today" id="twToday" hidden></p>
+      <p class="tw-hint">固定<b>困难档</b>单挑 wzzzhhhhh，按「你的总分 − wzzzhhhhh 总分」从高到低排名。榜单<b>云端共享</b>，所有人看到同一份排行；<b>手机号后 6 位</b>是你的身份凭证 —— 每个尾号<b>每天只能挑战一次</b>，换昵称也没用。点榜单里的记录行可回看对战时间、行动和得分构成（手机尾号只用于身份锁定，不上榜不展示）。</p>
       <p class="tw-stats" id="twStats"></p>
       <div id="twList" class="tw-list"></div>
       <p class="tw-empty" id="twEmpty" hidden>还没有人上榜 —— 交个昵称，赢下第一局！</p>
-      <div class="tw-foot">
-        <button id="btnTourneyClear" class="btn tiny">清空记录</button>
-      </div>
     </div>
     <div class="ov-actions">
       <button id="btnTourneyClose" class="btn primary">关掉</button>
