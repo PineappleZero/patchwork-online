@@ -724,7 +724,7 @@ kbd {
 .center {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   width: 420px;
   min-width: 0;
   min-height: 0;
@@ -736,7 +736,9 @@ kbd {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 10px 12px 12px;
+  /* v1.7.2 环放大到 376 后，左右内边距收窄到 8：给环上大补丁（5×5）留出
+     横向伸进来的余地，不然 3 点 / 9 点方向的大块会探出 stage 压到邻列。 */
+  padding: 8px 8px 10px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -790,8 +792,8 @@ kbd {
    舞台高度要比轨道再多留 40px：12 点钟和 6 点钟那两块补丁是「骑」在圆周上的，
    只给 2R 的话它们会顶出舞台去压标题和正面卡片。 */
 .ring-stage {
-  --ring-d: 336px;
-  --tb-cell: 25px;
+  --ring-d: 376px;
+  --tb-cell: 28px;
   /* 环上小补丁的格子边长 / 间隙。补丁图形本身不再写死像素，
      所以同一枚 chip 搬到框上（--rc-tile 换成 7px）能自动变大，不用重建。 */
   --rc-tile: 6px;
@@ -856,18 +858,20 @@ kbd {
      · .players 从 904px 放到 1000px（正好 = 94 + 400 + 12 + 400 + 94）；
      · 中间那列同步从 420px 收到 344px —— 绕拼布板时圆环不在了，
        中间只剩时间板和事件纪要，本来也吃不下 420px，把地方让给轨道正好。
+   v1.7.2 再放宽一档：.players 1120px = 106 + 448 + 12 + 448 + 106，
+     拼布板从 ~400px 涨到 ~448px，框上补丁格子也从 10px 涨到 11px。
    内边距只是个兜底值：真正的带宽由 app.js 的 frameBand() 按实际宽度算好写进内联样式
    （它必须 ≥ 路径内缩 + 补丁半身位 + 金色描边，否则描边会压到拼布板上）。 */
 .board-wrap.layout-frame { grid-template-columns: minmax(0, 1fr) minmax(300px, 344px); }
 .board-wrap.layout-frame .center { width: auto; }
 
 .board-wrap.layout-frame .players {
-  width: min(100%, 1000px);
+  width: min(100%, 1120px);
   justify-self: center;
   align-self: center;
   height: fit-content;
   align-content: start;
-  padding: 94px;
+  padding: 106px;
   overflow: visible;
 }
 
@@ -1154,8 +1158,9 @@ kbd {
 .log-wrap {
   flex: 1;
   /* 下限别定太高：窗口一矮，中间列会被撑破，日志直接被裁掉。
-     正常窗口下 flex:1 会把它撑得远大于这个值，所以调低不影响观感。 */
-  min-height: 104px;
+     正常窗口下 flex:1 会把它撑得远大于这个值，所以调低不影响观感。
+     v1.7.2 环放大吃掉了 ~17px 旧余量，下限从 104 收到 86 找补。 */
+  min-height: 86px;
   position: relative;
   display: flex;
 }
@@ -1578,8 +1583,9 @@ kbd {
 @media (max-width: 1080px) {
   .center { width: 352px; }
   .patch-grid .pc-cell { width: 10px; height: 10px; }
-  /* 窄一档：环和时间板一起等比缩，不用同步改 JS（半径是从轨道宽度反算的） */
-  .ring-stage { --ring-d: 288px; --tb-cell: 21px; }
+  /* 窄一档：环和时间板一起等比缩，不用同步改 JS（半径是从轨道宽度反算的）
+     v1.7.2 桌面档放大后（376/28），这里也跟着抬一档，仍然比桌面小一号 */
+  .ring-stage { --ring-d: 312px; --tb-cell: 23px; }
   .ring-front .patch-shape { height: 50px; }
   /* 中间列收窄后，绕拼布板这条轨道还能多挤一点出来 */
   .board-wrap.layout-frame { grid-template-columns: minmax(0, 1fr) minmax(280px, 320px); }
@@ -1588,7 +1594,7 @@ kbd {
 /* 窗口矮的时候（笔记本 768p 之类）把环再缩一档，
    否则「环 + 时间板」那块棋盘会把下面的事件纪要整个挤掉。 */
 @media (max-height: 760px) {
-  .ring-stage { --ring-d: 288px; --tb-cell: 21px; }
+  .ring-stage { --ring-d: 312px; --tb-cell: 23px; }
   .ring-front .patch-shape { height: 50px; }
   /* 矮屏上主菜单可能顶到顶，把标题布片和分隔线都收一收 */
   .menu-card { padding: 18px 20px 14px; }

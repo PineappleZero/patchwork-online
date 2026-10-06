@@ -1223,9 +1223,9 @@ function ok(cond, label, extra) {
     })()`);
     ok(cl.show, '更新日志弹层能打开');
     ok(cl.vers >= 3, '包含 3 个及以上版本', '实际 ' + cl.vers);
-    ok(cl.first.indexOf('v1.7.1') === 0, '首条是 v1.7.1', cl.first);
-    ok(cl.items >= 4, 'v1.7.1 条目不少于 4 条（云榜单 + 手机尾号每天一次 + 清空按钮退役 + 离线提示）', '实际 ' + cl.items);
-    ok(cl.versions.slice(0, 13).join(',') === 'v1.7.1,v1.7,v1.6.7,v1.6.6,v1.6.5,v1.6.4,v1.6.3,v1.6.2,v1.6.1,v1.6,v1.5.1,v1.5,v1.4.1',
+    ok(cl.first.indexOf('v1.7.2') === 0, '首条是 v1.7.2', cl.first);
+    ok(cl.items >= 3, 'v1.7.2 条目不少于 3 条（拼布板/轨道/补丁放大 + 布局找补 + 断点跟随）', '实际 ' + cl.items);
+    ok(cl.versions.slice(0, 13).join(',') === 'v1.7.2,v1.7.1,v1.7,v1.6.7,v1.6.6,v1.6.5,v1.6.4,v1.6.3,v1.6.2,v1.6.1,v1.6,v1.5.1,v1.5',
       '版本号是连续的（含补记的 1.1）', cl.versions.join(' / '));
     await screenshot(ws, 'v165-4-changelog.png');
 
