@@ -647,7 +647,8 @@ function ok(cond, label, extra) {
         '点记录行异步展开详情：双方得分构成 + 行动流水', JSON.stringify(tw2));
       ok(tw2.hiddenAgain, '再点一下详情收起');
 
-      // 6. 今日已挑战（UI 态）：本机记住的尾号 111111 今天已有记录 → 提示 + 按钮禁用
+      // 6.（v1.7.3）开屏查重已上移服务端：本机不再按尾号查云端
+      //    （phone6 列已对 anon 收回读取权限，尾号从根上读不到）
       await evaluate(ws, `(function(){
         localStorage.setItem('pwTourneyPhone', '111111');
         localStorage.setItem('pwTourneyName', '阿布');
@@ -659,32 +660,23 @@ function ok(cond, label, extra) {
       await sleep(400);
       const tw3 = await evaluate(ws, `(function(){
         return {
-          today: !document.getElementById('twToday').hidden,
-          todayText: document.getElementById('twToday').textContent,
-          goDisabled: document.getElementById('btnTourneyGo').disabled,
+          todayHidden: document.getElementById('twToday').hidden,
+          noPrecheck: typeof twCloudToday === 'undefined',
+          goEnabled: !document.getElementById('btnTourneyGo').disabled,
         };
       })()`);
-      ok(tw3.today && tw3.goDisabled && tw3.todayText.indexOf('阿布') >= 0,
-        '本机尾号今天已挑战：金色提示 + 按钮禁用', JSON.stringify(tw3));
+      ok(tw3.todayHidden && tw3.noPrecheck && tw3.goEnabled,
+        '开屏查重已上移服务端：本机不再按尾号查云端（尾号列收回读取权限），按钮可用', JSON.stringify(tw3));
 
-      // 7. 换昵称也绕不过：同尾号改名点开始 → 仍被拦（按尾号查云端）
-      await evaluate(ws, `(function(){
-        document.getElementById('twName').value = '改名选手';
-        document.getElementById('twName').dispatchEvent(new Event('input'));
-        return 'ok';
+      // 7. 换昵称也绕不过：同尾号在结算提交时仍被唯一索引拦下（23505）
+      const tw4 = await evaluate(ws, `(async function(){
+        const r = await twCloudSubmit({ name: '改名选手', phone6: '111111', diff: 3,
+          win: true, my_score: 43, bot_score: 40,
+          payload: { dur: 300000, actions: ['开局'], me: { total: 43 }, bot: { total: 40 } } });
+        return { dup: !!(r.error && r.error.code === '23505'), n: window.__twDb.rows.length };
       })()`);
-      await evaluate(ws, `document.getElementById('btnTourneyGo').click()`);
-      await sleep(300);
-      const tw4 = await evaluate(ws, `(function(){
-        return {
-          err: !document.getElementById('twErr').hidden,
-          errText: document.getElementById('twErr').textContent,
-          pending: !!window.__pw.tourneyPending,
-          inGame: document.getElementById('game').classList.contains('active'),
-        };
-      })()`);
-      ok(tw4.err && !tw4.pending && !tw4.inGame && tw4.errText.indexOf('111111') < 0 && tw4.errText.indexOf('今天') >= 0,
-        '换昵称同尾号：仍按尾号拦下（提示今天已挑战）', JSON.stringify(tw4));
+      ok(tw4.dup && tw4.n === 3,
+        '换昵称同尾号：结算提交时仍按尾号拦下（23505），改名无效', JSON.stringify(tw4));
 
       // 8. 真实链路：新尾号 → 开始挑战 → 困难档人机局 + 载荷武装（昵称+尾号）+ 行动采集
       await evaluate(ws, `(function(){

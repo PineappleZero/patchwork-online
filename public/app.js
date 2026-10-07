@@ -2055,6 +2055,12 @@ const TW = {
   cloud: null,     // 懒初始化的云客户端
   stub: null,      // 测试注入点：uicheck 里塞伪云 API，测试绝不触真实榜单
 };
+// 锦标赛是否走「服务端权威」HTTP 会话（v1.7.3）：
+// 非 localhost 的 http(s) 页面（线上域名 / 局域网）都具备服务端，整局在服务端跑，
+// 客户端只发意图、永不报分 —— curl 伪造和本地改分从此无效。
+// localhost / 127.0.0.1（本地开发、uicheck 云桩测试、GitHub zip 纯静态版）保持原路径。
+const TW_HTTP_HOST = location.protocol.startsWith('http') &&
+  !/^(localhost|127\.0\.0\.1)$/.test(location.hostname);
 // 云环境 publicConfig（激活云服务时下发）。publishableKey 只用来标识应用，
 // 权限由服务端按 Origin 精确匹配强制，放进前端源码是官方允许的用法。
 const TWC_ENDPOINT = 'https://patchwork-online.app.workbuddy.host';
@@ -2086,7 +2092,7 @@ async function twCloudList() {
   const db = twCloudDb();
   if (!db) return { data: null, error: { message: '云端服务不可用' } };
   return db.from('tw_games')
-    .select('id,name,diff,win,my_score,bot_score,day,created_at')
+    .select('id,name,diff,win,my_score,bot_score,mark,day,created_at')
     .order('diff', { ascending: false })
     .order('created_at', { ascending: false })
     .limit(100);
@@ -2099,13 +2105,8 @@ async function twCloudDetail(id) {
   return db.from('tw_games').select('name,payload,created_at').eq('id', id).maybeSingle();
 }
 
-/** 这个手机尾号今天是否已经挑战过（每天一次的第一道闸；换昵称也绕不过）。 */
-async function twCloudToday(phone6) {
-  if (TW.stub) return TW.stub.today(phone6);
-  const db = twCloudDb();
-  if (!db) return { data: null, error: { message: '云端服务不可用' } };
-  return db.from('tw_games').select('id,diff,name').eq('phone6', phone6).eq('day', twToday()).limit(1);
-}
+/** 这个手机尾号今天是否已经挑战过（每天一次的第一道闸；换昵称也绕不过）。
+ *  v1.7.3 起本函数退役：查重上移服务端（tw_entries 预约表），phone6 列已对玩家收回读取权限。 */
 
 async function twCloudSubmit(rec) {
   if (TW.stub) return TW.stub.submit(rec);
@@ -2158,6 +2159,14 @@ function twDetailHtml(rowName, payload, createdAt) {
       : '<div class="tw-muted">（本局行动没有记录下来）</div>'}</div>`;
 }
 
+/** 管理员标注徽章（mark 列只有云端管理端能写，玩家改不了）：
+ *  fake = 核查为伪造（非正常对局提交）；script = 真引擎对局但用时远超人类，疑似自动化。 */
+function twMarkBadge(mark) {
+  if (mark === 'fake') return '<span class="tw-mark fake" title="该记录经核查为伪造数据，不是正常对局提交">已核伪</span>';
+  if (mark === 'script') return '<span class="tw-mark script" title="对局流水真实完整，但用时远超人类操作速度，疑似自动化提交">疑似脚本</span>';
+  return '';
+}
+
 /** 渲染云端榜单。list 为 null 表示云端不可用（明确报错，不静默降级）。 */
 function renderTourney(list) {
   const stats = $('twStats');
@@ -2192,9 +2201,9 @@ function renderTourney(list) {
     empty.hidden = true;
   }
   box.innerHTML = list.map((rec, i) => `
-    <div class="tw-row" data-tw-id="${escapeHtml(String(rec.id))}">
+    <div class="tw-row${rec.mark === 'fake' ? ' tw-marked' : ''}" data-tw-id="${escapeHtml(String(rec.id))}">
       <span class="tw-rank">${i + 1}</span>
-      <span class="tw-name">${escapeHtml(rec.name)}</span>
+      <span class="tw-name">${escapeHtml(rec.name)}${twMarkBadge(rec.mark)}</span>
       ${twDiffBadge(rec.diff)}
       <span class="tw-score">${rec.my_score} : ${rec.bot_score}</span>
       <span class="tw-date">${twFmtTime(rec.created_at)}</span>
@@ -2224,31 +2233,12 @@ function twSavedPhone() {
   try { return localStorage.getItem(TW.PHONE_KEY) || ''; } catch (e) { return ''; }
 }
 
-/** 今日状态行：已挑战（按钮禁用）/ 云不可用（按钮禁用）/ 正常。 */
-function twRenderToday(st) {
-  const el = $('twToday');
-  const btn = $('btnTourneyGo');
-  btn.disabled = !st.ok || Boolean(st.rec);
-  if (!st.ok) {
-    el.textContent = '⚠ 榜单服务暂时连不上，无法开始挑战。';
-    el.hidden = false;
-    return;
-  }
-  if (st.rec) {
-    const d = st.rec.diff;
-    const who = st.rec.name ? `今天这个尾号已经用「${escapeHtml(st.rec.name)}」挑战过` : '今天这个尾号已经挑战过';
-    el.innerHTML = `${who}（净分 ${d > 0 ? '+' + d : d}），明天再来 —— 每个尾号每天只有一次。`;
-    el.hidden = false;
-    return;
-  }
-  el.hidden = true;
-}
-
 function openTourney() {
   $('twName').value = twSavedName() || ($('playerName').value || '').trim();
   $('twPhone').value = twSavedPhone();
   $('twErr').hidden = true;
   $('twToday').hidden = true;
+  $('btnTourneyGo').disabled = false;
   $('twStats').textContent = '';
   $('twEmpty').hidden = true;
   $('twList').innerHTML = '<div class="tw-muted">正在载入云端榜单…</div>';
@@ -2257,22 +2247,14 @@ function openTourney() {
   twRefresh();
 }
 
-/** 拉云端榜单 + 按本机记住的手机尾号查今日状态，一次弹层打开全部就绪。 */
+/** 拉云端榜单。今日查重已上移服务端（tw_entries 预约表）——
+ *  「今天已挑战」不再开屏拦截，点开始挑战时由服务端当场告知。 */
 async function twRefresh() {
-  const savedPhone = twSavedPhone();
-  const [listRes, todayRes] = await Promise.all([
-    twSafe(twCloudList()),
-    /^\d{6}$/.test(savedPhone) ? twSafe(twCloudToday(savedPhone)) : Promise.resolve({ data: [], error: null }),
-  ]);
+  const listRes = await twSafe(twCloudList());
   // 弹层已经关掉了就不用再刷（玩家手快时 twRefresh 可能晚归）
   if (!$('tourneyModal').classList.contains('show')) return;
   const list = (!listRes.error && Array.isArray(listRes.data)) ? listRes.data : null;
   renderTourney(list);
-  if (!todayRes.error && Array.isArray(todayRes.data)) {
-    twRenderToday({ ok: true, rec: todayRes.data[0] || null });
-  } else {
-    twRenderToday({ ok: false });
-  }
 }
 
 /** 点「开始挑战」：昵称 + 手机尾号必填；按尾号查云端当日记录，过闸才建房。 */
@@ -2295,21 +2277,46 @@ async function twStartChallenge() {
   const btn = $('btnTourneyGo');
   if (btn.disabled) return;
   btn.disabled = true;
-  let go = false;
-  try {
-    const res = await twSafe(twCloudToday(phone6));
-    if (res.error) {
+
+  if (TW_HTTP_HOST) {
+    // 服务端权威路径：查重（tw_entries 预约）发生在 /api/tw/start，
+    // 失败时弹层不关、错误显示在弹层里，玩家可以改完再试。
+    try {
+      const r = await fetch('/api/tw/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, phone6 }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (data.error || !data.token) {
+        err.textContent = data.error || '榜单服务暂时连不上 —— 稍后再试，不然赢了也没处记分。';
+        err.hidden = false;
+        btn.disabled = false;
+        return;
+      }
+      try {
+        localStorage.setItem(TW.NAME_KEY, name);
+        localStorage.setItem(TW.PHONE_KEY, phone6);
+      } catch (e) { /* 忽略 */ }
+      $('playerName').value = name;
+      rememberName(name);
+      TW.pending = { name, phone6, startedAt: Date.now(), actions: [], remote: true };
+      err.hidden = true;
+      $('tourneyModal').classList.remove('show');
+      setMenuMsg('');
+      SFX.play('click');
+      startHttpTourney(data.token, name);
+    } catch (e) {
       err.textContent = '榜单服务暂时连不上 —— 稍后再试，不然赢了也没处记分。';
       err.hidden = false;
-      return;
+      btn.disabled = false;
     }
-    if (res.data && res.data.length) {
-      const used = res.data[0];
-      err.textContent = `这个手机号今天已经用「${used.name}」挑战过了 —— 每个尾号每天只有一次机会，明天再来。`;
-      err.hidden = false;
-      twRenderToday({ ok: true, rec: used });
-      return;
-    }
+    return;
+  }
+
+  // 本机路径（localhost / 静态 zip）：没有服务端，查重靠结算时云端唯一索引兜底
+  let go = false;
+  try {
     try {
       localStorage.setItem(TW.NAME_KEY, name);
       localStorage.setItem(TW.PHONE_KEY, phone6);
@@ -2327,6 +2334,44 @@ async function twStartChallenge() {
   }
 }
 
+/** 服务端权威锦标赛（v1.7.3）：用一个「假 socket」复用现有 WS 消息管线 ——
+ *  send() 变成 POST /api/tw/action，响应里的 state 快照照常喂给 handleServerMessage。
+ *  客户端永远不产生分数：终局分数由服务端 engine.finalResult 算出并直接落库。 */
+function startHttpTourney(token, name) {
+  const fake = {
+    readyState: 1,
+    OPEN: 1,
+    close() { this.readyState = 3; },
+    send(raw) {
+      if (!token || this.readyState !== 1) return;
+      let action;
+      try { action = JSON.parse(raw); } catch (e) { return; }
+      fetch('/api/tw/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, action }),
+      }).then((r) => r.json()).then((data) => {
+        if (data.error) { pushLog(`<span class="lose">${escapeHtml(data.error)}</span>`); return; }
+        handleServerMessage(data.state);
+        if (data.settle) {
+          const d = data.settle.diff;
+          if (data.settle.status === 'ok') {
+            pushLog(`☁ 已记入云端排行榜（服务端权威结算 · ${escapeHtml(name)} ${d > 0 ? '+' + d : d}）`);
+          } else if (data.settle.status === 'dup') {
+            pushLog('☁ 这个手机号今天已有云端记录（每个尾号每天一次），本局没能上榜');
+          } else {
+            pushLog('☁ 云端排行榜提交失败（网络原因），本局成绩没能上榜');
+          }
+        }
+      }).catch(() => {
+        pushLog('<span class="lose">网络异常，这一手没有送出去，稍等再试</span>');
+      });
+    },
+  };
+  S.ws = fake;
+  handleServerMessage({ type: 'joined', room: '云端锦标赛', seat: 0, token, mode: 'solo', local: false, variant: 'classic' });
+}
+
 /** 第一个 solo playing 状态到达时，把 pending 装载成 S.tourney 开始采集。 */
 function maybeTourneyArm(msg) {
   if (!TW.pending || !msg || msg.type !== 'state' || msg.phase !== 'playing') return;
@@ -2336,6 +2381,7 @@ function maybeTourneyArm(msg) {
     phone6: TW.pending.phone6,
     startedAt: TW.pending.startedAt,
     actions: TW.pending.actions || [],
+    remote: !!TW.pending.remote, // 服务端权威会话：结算由服务端落库，客户端不再报分
   };
   TW.pending = null;
 }
@@ -2344,6 +2390,12 @@ function maybeTourneyArm(msg) {
 function twRecord(result, st) {
   const t = S.tourney;
   if (!t || !st || !st.players || !result || !result.scores) return;
+  if (t.remote) {
+    // 服务端权威会话（v1.7.3）：分数由服务端算好直接落库，客户端没有任何报分权力。
+    // 服务端的落库结果（settle）会随终局状态一起送到，由 startHttpTourney 里写日志。
+    S.tourney = null;
+    return;
+  }
   let mySeat = -1;
   let botSeat = -1;
   st.players.forEach((p, seat) => {

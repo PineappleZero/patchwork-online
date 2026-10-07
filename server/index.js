@@ -17,6 +17,7 @@ const path = require('path');
 const crypto = require('crypto');
 const engine = require('./engine');
 const ai = require('./ai');
+const tourney = require('./tourney');
 const { PATCHES, LEATHER, TIME_BOARD, LEATHER_SPACES, INCOME_SPACES, BOARD_SIZE, LAST_SPACE, VARIANTS, CHAOS_EVENTS } = require('./data');
 
 const PORT = Number(process.env.PORT || 3178);
@@ -598,7 +599,10 @@ function startRematch(room, connIndex) {
 /* ------------------------------------------------------------------ */
 
 const server = http.createServer((req, res) => {
-  if (req.url.split('?')[0] === '/api/info') {
+  // 服务端权威锦标赛（v1.7.3）：/api/tw/* 交给独立模块
+  tourney.handle(req, res, req.url.split('?')[0]).then((handled) => {
+    if (handled) return;
+    if (req.url.split('?')[0] === '/api/info') {
     res.writeHead(200, { 'Content-Type': MIME['.json'] });
     res.end(JSON.stringify({
       patches: PATCHES,
@@ -622,6 +626,7 @@ const server = http.createServer((req, res) => {
     return;
   }
   serveStatic(req, res);
+  });
 });
 
 const upgradeHeaders = [];
