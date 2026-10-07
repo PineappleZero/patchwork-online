@@ -43,7 +43,9 @@ function deadCells(board) {
  * 注意所有项目都必须是**增量** —— 一旦放绝对值（比如「当前总空格数」），
  * 每块补丁都会得一个巨大的负数，AI 就永远不买了。
  */
-const W = {
+/* let 而不是 const：进化脚本（evolve-ai.js）要在运行时换权重找更强的 hard。
+   正常对局永远用默认值，只有显式 setWeights 才会变。 */
+let W = {
   income: 6.5,  // 每点纽扣收益：之后每次经过纽扣格都能收，是复利
   cell: 2.0,    // 每覆盖一格
   cost: 1.0,    // 每花掉 1 个纽扣
@@ -52,8 +54,8 @@ const W = {
   seven: 28,    // 拼出完整 7x7
 };
 
-/* hard 在 W 之上再追加的一组项 —— 单位对齐「分」 */
-const HW = {
+/* hard 在 W 之上再追加的一组项 —— 单位对齐「分」（同样可被进化脚本覆盖） */
+let HW = {
   fit: 1.5,        // 落点与已有布块的贴合（每一条共享边）
   pocket: 0.9,     // 填进「只剩这一处能塞」的角落，救回一个原本的死格
   fragment: 1.2,   // 每新增一块「孤立的小空洞」（面积 1~2），是未来填不满的前兆
@@ -64,6 +66,16 @@ const HW = {
 /** 复制一份拼布板（board 是 9×9，每格 null 或 {id,...}） */
 function cloneBoard(board) {
   return board.map((row) => row.slice());
+}
+
+/* —— 进化/调参专用（evolve-ai.js 用；正常对局不会调用）—— */
+function getWeights() {
+  return { W: { ...W }, HW: { ...HW } };
+}
+
+function setWeights(next) {
+  W = { ...W, ...next.W };
+  HW = { ...HW, ...next.HW };
 }
 
 /** 把一块补丁按朝向写到副本上，返回新副本 */
@@ -758,6 +770,9 @@ function levelLabel(level) {
 module.exports = {
   chooseAction,
   chooseLeatherCell,
+  /* —— 进化/调参专用（正常对局用不到），实现见下方 getWeights/setWeights —— */
+  getWeights,
+  setWeights,
   scoreBuy: scoreBuyNormal,
   scoreBuyHard,
   scoreAdvance,
